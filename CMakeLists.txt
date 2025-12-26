@@ -1,12 +1,20 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.8)
 project(fast_livo)
 
-set(CMAKE_BUILD_TYPE "Release")
-message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
+# Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Set build type
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release")
+endif()
+message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 
 # Set common compile options
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fexceptions")
@@ -31,7 +39,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64|ARM|AARCH64)")
   add_definitions(-DARM_ARCH)
 else()
   # x86-64 (Intel/AMD) optimizations
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops") #-flto
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops")
   message(STATUS "Using general x86 optimizations: -O3 -march=native -mtune=native -funroll-loops") 
   add_definitions(-DX86_ARCH)
 endif()
@@ -75,73 +83,221 @@ else()
   message(STATUS "mimalloc not found, proceeding without it")
 endif()
 
-# Find catkin and required dependencies
-find_package(catkin REQUIRED COMPONENTS
+# Find ament_cmake and required dependencies
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclpy REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(livox_ros_driver2 REQUIRED)
+
+# Find non-ROS dependencies
+find_package(Eigen3 REQUIRED)
+find_package(PCL REQUIRED)
+find_package(Boost REQUIRED COMPONENTS thread)
+
+# Add Sophus as a subdirectory (local third-party dependency)
+# Note: Sophus will be built as a shared library named "Sophus"
+# Set Sophus_INCLUDE_DIR before adding subdirectory
+# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
+# set(Sophus_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/Sophus" CACHE PATH "Sophus include directory")
+# add_subdirectory(thirdparty/Sophus)
+# Keep the include directory for include_directories, but don't build it
+# set(Sophus_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/Sophus")
+
+# Use livox_ros_driver2 messages instead of generating our own
+
+# Include directories
+include_directories(
+  include
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+  ${Sophus_INCLUDE_DIR}
+)
+
+# Note: We'll use rosidl_target_interfaces() instead of getting typesupport target directly
+
+# Add libraries
+add_library(lio src/voxel_map.cpp)
+ament_target_dependencies(lio
+  rclcpp
   geometry_msgs
   nav_msgs
   sensor_msgs
-  roscpp
-  rospy
   std_msgs
-  pcl_ros
-  tf
-  message_generation
-  eigen_conversions
-  vikit_common
-  vikit_ros
-  cv_bridge
-  image_transport
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+  Eigen3
+  PCL
+  Boost
 )
-
-find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED)
-find_package(OpenCV REQUIRED)
-find_package(Sophus REQUIRED)
-find_package(Boost REQUIRED COMPONENTS thread)
-
-set(Sophus_LIBRARIES libSophus.so)
-
-# Define the catkin package
-catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime cv_bridge vikit_common vikit_ros image_transport
-  DEPENDS EIGEN3 PCL OpenCV Sophus
-)
-
-# Include directories for dependencies
-include_directories(
-  ${catkin_INCLUDE_DIRS}
+target_include_directories(lio PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  ${OpenCV_INCLUDE_DIRS}
-  ${Sophus_INCLUDE_DIRS}
-  include
+  # ${Sophus_INCLUDE_DIR}
+)
+# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
+# target_link_libraries(lio Sophus)
+
+add_library(pre src/preprocess.cpp)
+ament_target_dependencies(pre
+  rclcpp
+  sensor_msgs
+  std_msgs
+  tf2_ros
+  pcl_conversions
+  PCL
+)
+target_include_directories(pre PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS}
+)
+ament_target_dependencies(pre livox_ros_driver2)
+
+add_library(imu_proc src/IMU_Processing.cpp)
+ament_target_dependencies(imu_proc
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  std_msgs
+  tf2_ros
+  Eigen3
+)
+target_include_directories(imu_proc PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIR}
 )
 
-# Add libraries
-add_library(vio src/vio.cpp src/frame.cpp src/visual_point.cpp)
-add_library(lio src/voxel_map.cpp)
-add_library(pre src/preprocess.cpp)
-add_library(imu_proc src/IMU_Processing.cpp)
 add_library(laser_mapping src/LIVMapper.cpp)
+ament_target_dependencies(laser_mapping
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+  Eigen3
+  PCL
+  Boost
+)
+target_include_directories(laser_mapping PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+  ${Sophus_INCLUDE_DIR}
+)
+# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
+# target_link_libraries(laser_mapping Sophus)
+ament_target_dependencies(laser_mapping livox_ros_driver2)
 
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)
-
-# Link libraries to the executable
+ament_target_dependencies(fastlivo_mapping
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+  Eigen3
+  PCL
+  Boost
+)
+target_include_directories(fastlivo_mapping PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+  ${Sophus_INCLUDE_DIR}
+)
 target_link_libraries(fastlivo_mapping
   laser_mapping
-  vio
   lio
   pre
   imu_proc
-  ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
-  ${OpenCV_LIBRARIES}
-  ${Sophus_LIBRARIES}
+  # Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
+  # Sophus
   ${Boost_LIBRARIES}
 )
+ament_target_dependencies(fastlivo_mapping livox_ros_driver2)
 
 # Link mimalloc if found
 if(mimalloc_FOUND)
   target_link_libraries(fastlivo_mapping mimalloc)
 endif()
+
+# Install targets
+install(TARGETS
+  fastlivo_mapping
+  lio
+  pre
+  imu_proc
+  laser_mapping
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install include directories
+install(DIRECTORY include/
+  DESTINATION include
+)
+
+# Install launch files
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
+)
+
+# Install config files
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
+# Install rviz config files
+install(DIRECTORY rviz_cfg/
+  DESTINATION share/${PROJECT_NAME}/rviz_cfg
+)
+
+# Export dependencies
+ament_export_dependencies(
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  pcl_conversions
+  livox_ros_driver2
+)
+
+# Export interfaces (messages are automatically exported via rosidl_default_runtime)
+
+ament_export_include_directories(include)
+ament_export_libraries(lio pre imu_proc laser_mapping)
+
+ament_package()

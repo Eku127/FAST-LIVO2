@@ -7,7 +7,7 @@
       ros_driver_bug_fix: false
 
     extrin_calib:
-      extrinsic_T: [0.04165, 0.02326, -0.0284]
+      extrinsic_T: [-0.011, -0.02329, 0.04412]
       extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 
     time_offset: 
@@ -17,9 +17,9 @@
     preprocess:
       point_filter_num: 1
       filter_size_surf: 0.1
-      lidar_type: 1 # Livox Avia LiDAR
-      scan_line: 6
-      blind: 0.8
+      lidar_type: 1 # Livox LiDAR
+      scan_line: 4
+      blind: 0.2
 
     imu:
       imu_en: true
@@ -34,13 +34,13 @@
       dept_err: 0.02
       beam_err: 0.05
       min_eigen_value: 0.0025 # 0.005
-      voxel_size: 0.5
+      voxel_size: 0.2
       max_layer: 2
       max_points_num: 50
       layer_init_num: [5, 5, 5, 5, 5]
 
     local_map:  
-      map_sliding_en: false
+      map_sliding_en: true
       half_map_size: 100
       sliding_thresh: 8.0
 
@@ -59,10 +59,10 @@
       pose_output_en: false
 
     pcd_save:
-      pcd_save_en: false
+      pcd_save_en: true
       type: 0 # 0: World Frame, 1: Body Frame;
       colmap_output_en: false # need to set interval = -1
       filter_size_pcd: 0.15
-      interval: -1
+      interval: 10
       # how many LiDAR frames saved in each pcd file;
       # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

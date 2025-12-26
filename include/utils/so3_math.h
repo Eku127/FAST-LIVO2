@@ -4,6 +4,10 @@
 #include <Eigen/Core>
 #include <math.h>
 
+#ifndef DEG2RAD
+#define DEG2RAD(x) ((x) * M_PI / 180.0)
+#endif
+
 #define SKEW_SYM_MATRX(v) 0.0, -v[2], v[1], v[2], 0.0, -v[0], -v[1], v[0], 0.0
 
 template <typename T> Eigen::Matrix<T, 3, 3> Exp(const Eigen::Matrix<T, 3, 1> &&ang)

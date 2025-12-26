@@ -11,6 +11,8 @@ which is included as part of this source code package.
 */
 
 #include "IMU_Processing.h"
+#include <rclcpp/rclcpp.hpp>
+#include <cassert>
 
 ImuProcess::ImuProcess() : Eye3d(M3D::Identity()),
                            Zero3d(0, 0, 0), b_first_frame(true), imu_need_init(true)
@@ -27,7 +29,7 @@ ImuProcess::ImuProcess() : Eye3d(M3D::Identity()),
   acc_s_last = Zero3d;
   Lid_offset_to_IMU = Zero3d;
   Lid_rot_to_IMU = Eye3d;
-  last_imu.reset(new sensor_msgs::Imu());
+  last_imu.reset(new sensor_msgs::msg::Imu());
   cur_pcl_un_.reset(new PointCloudXYZI());
 }
 
@@ -35,14 +37,14 @@ ImuProcess::~ImuProcess() {}
 
 void ImuProcess::Reset()
 {
-  ROS_WARN("Reset ImuProcess");
+  std::cout << "Reset ImuProcess" << std::endl;
   mean_acc = V3D(0, 0, -1.0);
   mean_gyr = V3D(0, 0, 0);
   angvel_last = Zero3d;
   imu_need_init = true;
   init_iter_num = 1;
   IMUpose.clear();
-  last_imu.reset(new sensor_msgs::Imu());
+  last_imu.reset(new sensor_msgs::msg::Imu());
   cur_pcl_un_.reset(new PointCloudXYZI());
 }
 
@@ -105,7 +107,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, in
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
    ** 2. normalize the acceleration measurenments to unit gravity **/
-  ROS_INFO("IMU Initializing: %.1f %%", double(N) / MAX_INI_COUNT * 100);
+  printf("IMU Initializing: %.1f %%\n", double(N) / MAX_INI_COUNT * 100);
   V3D cur_acc, cur_gyr;
 
   if (b_first_frame)
@@ -243,14 +245,14 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
   // cout<<"meas.imu.size: "<<meas.imu.size()<<endl;
   auto v_imu = meas.imu;
   v_imu.push_front(last_imu);
-  const double &imu_beg_time = v_imu.front()->header.stamp.toSec();
-  const double &imu_end_time = v_imu.back()->header.stamp.toSec();
+  const double imu_beg_time = rclcpp::Time(v_imu.front()->header.stamp).seconds();
+  const double imu_end_time = rclcpp::Time(v_imu.back()->header.stamp).seconds();
   const double prop_beg_time = last_prop_end_time;
   // printf("[ IMU ] undistort input size: %zu \n", lidar_meas.pcl_proc_cur->points.size());
   // printf("[ IMU ] IMU data sequence size: %zu \n", meas.imu.size());
   // printf("[ IMU ] lidar_scan_index_now: %d \n", lidar_meas.lidar_scan_index_now);
 
-  const double prop_end_time = lidar_meas.lio_vio_flg == LIO ? meas.lio_time : meas.vio_time;
+  const double prop_end_time = meas.lio_time;
 
   /*** cut lidar point based on the propagation-start time and required
    * propagation-end time ***/
@@ -329,7 +331,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       auto head = v_imu[i];
       auto tail = v_imu[i + 1];
 
-      if (tail->header.stamp.toSec() < prop_beg_time) continue;
+      if (rclcpp::Time(tail->header.stamp).seconds() < prop_beg_time) continue;
 
       angvel_avr << 0.5 * (head->angular_velocity.x + tail->angular_velocity.x), 0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
           0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
@@ -344,7 +346,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       // cout<<"acc_avr: "<<acc_avr.transpose()<<endl;
 
       // #ifdef DEBUG_PRINT
-      fout_imu << setw(10) << head->header.stamp.toSec() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
+      fout_imu << setw(10) << rclcpp::Time(head->header.stamp).seconds() - first_lidar_time << " " << angvel_avr.transpose() << " " << acc_avr.transpose() << endl;
       // #endif
 
       // imu_time = head->header.stamp.toSec() - first_lidar_time;
@@ -352,22 +354,22 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       angvel_avr -= state_inout.bias_g;
       acc_avr = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a;
 
-      if (head->header.stamp.toSec() < prop_beg_time)
+      if (rclcpp::Time(head->header.stamp).seconds() < prop_beg_time)
       {
         // printf("00 \n");
-        dt = tail->header.stamp.toSec() - last_prop_end_time;
-        offs_t = tail->header.stamp.toSec() - prop_beg_time;
+        dt = rclcpp::Time(tail->header.stamp).seconds() - last_prop_end_time;
+        offs_t = rclcpp::Time(tail->header.stamp).seconds() - prop_beg_time;
       }
       else if (i != v_imu.size() - 2)
       {
         // printf("11 \n");
-        dt = tail->header.stamp.toSec() - head->header.stamp.toSec();
-        offs_t = tail->header.stamp.toSec() - prop_beg_time;
+        dt = rclcpp::Time(tail->header.stamp).seconds() - rclcpp::Time(head->header.stamp).seconds();
+        offs_t = rclcpp::Time(tail->header.stamp).seconds() - prop_beg_time;
       }
       else
       {
         // printf("22 \n");
-        dt = prop_end_time - head->header.stamp.toSec();
+        dt = prop_end_time - rclcpp::Time(head->header.stamp).seconds();
         offs_t = prop_end_time - prop_beg_time;
       }
 
@@ -544,7 +546,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
 {
   double t1, t2, t3;
   t1 = omp_get_wtime();
-  ROS_ASSERT(lidar_meas.lidar != nullptr);
+  assert(lidar_meas.lidar != nullptr);
   if (!imu_en)
   {
     Forward_without_imu(lidar_meas, stat, *cur_pcl_un_);
@@ -555,7 +557,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
 
   if (imu_need_init)
   {
-    double pcl_end_time = lidar_meas.lio_vio_flg == LIO ? meas.lio_time : meas.vio_time;
+    double pcl_end_time = meas.lio_time;
     // lidar_meas.last_lio_update_time = pcl_end_time;
 
     if (meas.imu.empty()) { return; };
@@ -570,12 +572,12 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
     {
       // cov_acc *= pow(G_m_s2 / mean_acc.norm(), 2);
       imu_need_init = false;
-      ROS_INFO("IMU Initials: Gravity: %.4f %.4f %.4f %.4f; acc covarience: "
+      printf("IMU Initials: Gravity: %.4f %.4f %.4f %.4f; acc covarience: "
                "%.8f %.8f %.8f; gry covarience: %.8f %.8f %.8f \n",
                stat.gravity[0], stat.gravity[1], stat.gravity[2], mean_acc.norm(), cov_acc[0], cov_acc[1], cov_acc[2], cov_gyr[0], cov_gyr[1],
                cov_gyr[2]);
-      ROS_INFO("IMU Initials: ba covarience: %.8f %.8f %.8f; bg covarience: "
-               "%.8f %.8f %.8f",
+      printf("IMU Initials: ba covarience: %.8f %.8f %.8f; bg covarience: "
+               "%.8f %.8f %.8f\n",
                cov_bias_acc[0], cov_bias_acc[1], cov_bias_acc[2], cov_bias_gyr[0], cov_bias_gyr[1], cov_bias_gyr[2]);
       fout_imu.open(DEBUG_FILE_DIR("imu.txt"), ios::out);
     }

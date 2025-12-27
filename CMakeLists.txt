@@ -228,6 +228,7 @@ target_link_libraries(fastlivo_mapping
   imu_proc
   ${PCL_LIBRARIES}
   ${Boost_LIBRARIES}
+  ${OpenMP_CXX_LIBRARIES}
 )
 ament_target_dependencies(fastlivo_mapping livox_ros_driver2)
 

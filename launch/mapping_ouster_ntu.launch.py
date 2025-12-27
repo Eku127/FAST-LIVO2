@@ -24,13 +24,13 @@ def generate_launch_description():
     main_config = PathJoinSubstitution([
         pkg_share,
         'config',
-        'HILTI22.yaml'
+        'NTU_VIRAL.yaml'
     ])
     
     camera_config = PathJoinSubstitution([
         pkg_share,
         'config',
-        'camera_fisheye_HILTI22.yaml'
+        'camera_NTU_VIRAL.yaml'
     ])
     
     # Main mapping node
@@ -51,7 +51,7 @@ def generate_launch_description():
         arguments=['-d', PathJoinSubstitution([
             pkg_share,
             'rviz_cfg',
-            'hilti.rviz'
+            'ntu_viral.rviz'
         ])],
         condition=IfCondition(rviz)
     )
@@ -61,4 +61,5 @@ def generate_launch_description():
         mapping_node,
         rviz_node
     ])
+
 

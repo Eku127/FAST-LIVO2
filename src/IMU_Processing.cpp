@@ -14,8 +14,8 @@ which is included as part of this source code package.
 #include <rclcpp/rclcpp.hpp>
 #include <cassert>
 
-ImuProcess::ImuProcess() : Eye3d(M3D::Identity()),
-                           Zero3d(0, 0, 0), b_first_frame(true), imu_need_init(true)
+ImuProcess::ImuProcess() : imu_need_init(true), Eye3d(M3D::Identity()),
+                           Zero3d(0, 0, 0), b_first_frame(true)
 {
   init_iter_num = 1;
   cov_acc = V3D(0.1, 0.1, 0.1);
@@ -238,15 +238,15 @@ void ImuProcess::Forward_without_imu(LidarMeasureGroup &meas, StatesGroup &state
 
 void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out)
 {
-  double t0 = omp_get_wtime();
+  // double t0 = omp_get_wtime();
   pcl_out.clear();
   /*** add the imu of the last frame-tail to the of current frame-head ***/
   MeasureGroup &meas = lidar_meas.measures.back();
   // cout<<"meas.imu.size: "<<meas.imu.size()<<endl;
   auto v_imu = meas.imu;
   v_imu.push_front(last_imu);
-  const double imu_beg_time = rclcpp::Time(v_imu.front()->header.stamp).seconds();
-  const double imu_end_time = rclcpp::Time(v_imu.back()->header.stamp).seconds();
+  // const double imu_beg_time = rclcpp::Time(v_imu.front()->header.stamp).seconds();
+  // const double imu_end_time = rclcpp::Time(v_imu.back()->header.stamp).seconds();
   const double prop_beg_time = last_prop_end_time;
   // printf("[ IMU ] undistort input size: %zu \n", lidar_meas.pcl_proc_cur->points.size());
   // printf("[ IMU ] IMU data sequence size: %zu \n", meas.imu.size());
@@ -288,7 +288,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
   // sort(pcl_out.points.begin(), pcl_out.points.end(), time_list);
   // lidar_meas.debug_show();
   // cout<<"UndistortPcl [ IMU ]: Process lidar from "<<prop_beg_time<<" to
-  // "<<prop_end_time<<", " \
+  // "<<prop_end_time<<", "
   //          <<meas.imu.size()<<" imu msgs from "<<imu_beg_time<<" to
   //          "<<imu_end_time<<endl;
   // cout<<"[ IMU ]: point size: "<<lidar_meas.lidar->points.size()<<endl;
@@ -326,7 +326,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
   case LIO:
   case VIO:
     dt = 0;
-    for (int i = 0; i < v_imu.size() - 1; i++)
+    for (size_t i = 0; i < v_imu.size() - 1; i++)
     {
       auto head = v_imu[i];
       auto tail = v_imu[i + 1];
@@ -360,7 +360,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
         dt = rclcpp::Time(tail->header.stamp).seconds() - last_prop_end_time;
         offs_t = rclcpp::Time(tail->header.stamp).seconds() - prop_beg_time;
       }
-      else if (i != v_imu.size() - 2)
+      else if (i != static_cast<size_t>(v_imu.size() - 2))
       {
         // printf("11 \n");
         dt = rclcpp::Time(tail->header.stamp).seconds() - rclcpp::Time(head->header.stamp).seconds();
@@ -471,7 +471,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
   last_imu = v_imu.back();
   last_prop_end_time = prop_end_time;
 
-  double t1 = omp_get_wtime();
+  // double t1 = omp_get_wtime();
 
   // auto pos_liD_e = state_inout.pos_end + state_inout.rot_end *
   // Lid_offset_to_IMU; auto R_liD_e   = state_inout.rot_end * Lidar_R_to_IMU;
@@ -501,7 +501,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
     for (auto it_kp = IMUpose.end() - 1; it_kp != IMUpose.begin(); it_kp--)
     {
       auto head = it_kp - 1;
-      auto tail = it_kp;
+      // auto tail = it_kp;
       R_imu << MAT_FROM_ARRAY(head->rot);
       acc_imu << VEC_FROM_ARRAY(head->acc);
       // cout<<"head imu acc: "<<acc_imu.transpose()<<endl;
@@ -544,8 +544,8 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
 
 void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_)
 {
-  double t1, t2, t3;
-  t1 = omp_get_wtime();
+  // double t1, t2, t3;
+  // t1 = omp_get_wtime();
   assert(lidar_meas.lidar != nullptr);
   if (!imu_en)
   {
@@ -557,7 +557,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
 
   if (imu_need_init)
   {
-    double pcl_end_time = meas.lio_time;
+    // double pcl_end_time = meas.lio_time;
     // lidar_meas.last_lio_update_time = pcl_end_time;
 
     if (meas.imu.empty()) { return; };

@@ -95,16 +95,16 @@ void VoxelOctoTree::init_plane(const std::vector<pointWithVar> &points, VoxelPla
   evalsReal.rowwise().sum().minCoeff(&evalsMin);
   evalsReal.rowwise().sum().maxCoeff(&evalsMax);
   int evalsMid = 3 - evalsMin - evalsMax;
-  Eigen::Vector3d evecMin = evecs.real().col(evalsMin);
-  Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
-  Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
+  // Eigen::Vector3d evecMin = evecs.real().col(evalsMin);
+  // Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
+  // Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
   Eigen::Matrix3d J_Q;
   J_Q << 1.0 / plane->points_size_, 0, 0, 0, 1.0 / plane->points_size_, 0, 0, 0, 1.0 / plane->points_size_;
   // && evalsReal(evalsMid) > 0.05
   //&& evalsReal(evalsMid) > 0.01
   if (evalsReal(evalsMin) < planer_threshold_)
   {
-    for (int i = 0; i < points.size(); i++)
+    for (size_t i = 0; i < points.size(); i++)
     {
       Eigen::Matrix<double, 6, 3> J;
       Eigen::Matrix3d F;
@@ -155,14 +155,14 @@ void VoxelOctoTree::init_plane(const std::vector<pointWithVar> &points, VoxelPla
 
 void VoxelOctoTree::init_octo_tree()
 {
-  if (temp_points_.size() > points_size_threshold_)
+  if (static_cast<int>(temp_points_.size()) > points_size_threshold_)
   {
     init_plane(temp_points_, plane_ptr_);
     if (plane_ptr_->is_plane_ == true)
     {
       octo_state_ = 0;
       // new added
-      if (temp_points_.size() > max_points_num_)
+      if (static_cast<int>(temp_points_.size()) > max_points_num_)
       {
         update_enable_ = false;
         std::vector<pointWithVar>().swap(temp_points_);
@@ -209,14 +209,14 @@ void VoxelOctoTree::cut_octo_tree()
   {
     if (leaves_[i] != nullptr)
     {
-      if (leaves_[i]->temp_points_.size() > leaves_[i]->points_size_threshold_)
+      if (static_cast<int>(leaves_[i]->temp_points_.size()) > leaves_[i]->points_size_threshold_)
       {
         init_plane(leaves_[i]->temp_points_, leaves_[i]->plane_ptr_);
         if (leaves_[i]->plane_ptr_->is_plane_)
         {
           leaves_[i]->octo_state_ = 0;
           // new added
-          if (leaves_[i]->temp_points_.size() > leaves_[i]->max_points_num_)
+          if (static_cast<int>(leaves_[i]->temp_points_.size()) > leaves_[i]->max_points_num_)
           {
             leaves_[i]->update_enable_ = false;
             std::vector<pointWithVar>().swap(leaves_[i]->temp_points_);
@@ -241,7 +241,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
   {
     new_points_++;
     temp_points_.push_back(pv);
-    if (temp_points_.size() > points_size_threshold_) { init_octo_tree(); }
+    if (static_cast<int>(temp_points_.size()) > points_size_threshold_) { init_octo_tree(); }
   }
   else
   {
@@ -256,7 +256,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
           init_plane(temp_points_, plane_ptr_);
           new_points_ = 0;
         }
-        if (temp_points_.size() >= max_points_num_)
+        if (static_cast<int>(temp_points_.size()) >= max_points_num_)
         {
           update_enable_ = false;
           std::vector<pointWithVar>().swap(temp_points_);
@@ -296,7 +296,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
             init_plane(temp_points_, plane_ptr_);
             new_points_ = 0;
           }
-          if (temp_points_.size() > max_points_num_)
+          if (static_cast<int>(temp_points_.size()) > max_points_num_)
           {
             update_enable_ = false;
             std::vector<pointWithVar>().swap(temp_points_);
@@ -387,7 +387,8 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
   H_T_H.setZero();
   I_STATE.setIdentity();
 
-  bool flg_EKF_inited, flg_EKF_converged, EKF_stop_flg = 0;
+  // bool flg_EKF_inited, flg_EKF_converged, EKF_stop_flg = 0;
+  bool flg_EKF_converged, EKF_stop_flg = 0;
   for (int iterCount = 0; iterCount < config_setting_.max_iterations_; iterCount++)
   {
     double total_residual = 0.0;
@@ -415,7 +416,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
 
     // build_residual_time += omp_get_wtime() - t1;
 
-    for (int i = 0; i < ptpl_list_.size(); i++)
+    for (size_t i = 0; i < ptpl_list_.size(); i++)
     {
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);
     }
@@ -489,7 +490,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat)
     auto vec = state_propagat - state_;
     VD(DIM_STATE)
     solution = K_1.block<DIM_STATE, 6>(0, 0) * HTz + vec.block<DIM_STATE, 1>(0, 0) - G.block<DIM_STATE, 6>(0, 0) * vec.block<6, 1>(0, 0);
-    int minRow, minCol;
+    // int minRow, minCol;
     state_ += solution;
     auto rot_add = solution.block<3, 1>(0, 0);
     auto t_add = solution.block<3, 1>(3, 0);
@@ -666,9 +667,9 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
 
 void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list)
 {
-  int max_layer = config_setting_.max_layer_;
+  // int max_layer = config_setting_.max_layer_;
   double voxel_size = config_setting_.max_voxel_size_;
-  double sigma_num = config_setting_.sigma_num_;
+  // double sigma_num = config_setting_.sigma_num_;
   std::mutex mylock;
   ptpl_list.clear();
   std::vector<PointToPlane> all_ptpl_list(pv_list.size());
@@ -683,7 +684,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     omp_set_num_threads(MP_PROC_NUM);
     #pragma omp parallel for
   #endif
-  for (int i = 0; i < index.size(); i++)
+  for (size_t i = 0; i < index.size(); i++)
   {
     pointWithVar &pv = pv_list[i];
     float loc_xyz[3];
@@ -745,7 +746,7 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
   if (current_octo->plane_ptr_->is_plane_)
   {
     VoxelPlane &plane = *current_octo->plane_ptr_;
-    Eigen::Vector3d p_world_to_center = p_w - plane.center_;
+    // Eigen::Vector3d p_world_to_center = p_w - plane.center_;
     float dis_to_plane = fabs(plane.normal_(0) * p_w(0) + plane.normal_(1) * p_w(1) + plane.normal_(2) * p_w(2) + plane.d_);
     float dis_to_center = (plane.center_(0) - p_w(0)) * (plane.center_(0) - p_w(0)) + (plane.center_(1) - p_w(1)) * (plane.center_(1) - p_w(1)) +
                           (plane.center_(2) - p_w(2)) * (plane.center_(2) - p_w(2));

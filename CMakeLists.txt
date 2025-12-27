@@ -1,8 +1,16 @@
 cmake_minimum_required(VERSION 3.8)
 project(fast_livo)
 
+# Set CMake policies to suppress warnings
+if(POLICY CMP0144)
+  cmake_policy(SET CMP0144 NEW)
+endif()
+if(POLICY CMP0074)
+  cmake_policy(SET CMP0074 NEW)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(-Wall -Wextra -Wno-pedantic)
 endif()
 
 # Set C++ standard
@@ -103,26 +111,12 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
-# Add Sophus as a subdirectory (local third-party dependency)
-# Note: Sophus will be built as a shared library named "Sophus"
-# Set Sophus_INCLUDE_DIR before adding subdirectory
-# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-# set(Sophus_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/Sophus" CACHE PATH "Sophus include directory")
-# add_subdirectory(thirdparty/Sophus)
-# Keep the include directory for include_directories, but don't build it
-# set(Sophus_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/Sophus")
-
-# Use livox_ros_driver2 messages instead of generating our own
-
 # Include directories
 include_directories(
   include
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  ${Sophus_INCLUDE_DIR}
 )
-
-# Note: We'll use rosidl_target_interfaces() instead of getting typesupport target directly
 
 # Add libraries
 add_library(lio src/voxel_map.cpp)
@@ -146,10 +140,7 @@ target_include_directories(lio PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  # ${Sophus_INCLUDE_DIR}
 )
-# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-# target_link_libraries(lio Sophus)
 
 add_library(pre src/preprocess.cpp)
 ament_target_dependencies(pre
@@ -203,10 +194,8 @@ target_include_directories(laser_mapping PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  ${Sophus_INCLUDE_DIR}
 )
-# Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-# target_link_libraries(laser_mapping Sophus)
+
 ament_target_dependencies(laser_mapping livox_ros_driver2)
 
 # Add the main executable
@@ -231,7 +220,6 @@ target_include_directories(fastlivo_mapping PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
-  ${Sophus_INCLUDE_DIR}
 )
 target_link_libraries(fastlivo_mapping
   laser_mapping
@@ -239,8 +227,6 @@ target_link_libraries(fastlivo_mapping
   pre
   imu_proc
   ${PCL_LIBRARIES}
-  # Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-  # Sophus
   ${Boost_LIBRARIES}
 )
 ament_target_dependencies(fastlivo_mapping livox_ros_driver2)

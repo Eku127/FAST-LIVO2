@@ -18,15 +18,9 @@ which is included as part of this source code package.
 #include <utils/types.h>
 #include <utils/color.h>
 #include <sensor_msgs/msg/imu.hpp>
-// Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-// #include <sophus/se3.h>
-// tf2_ros is only used in LIVMapper, moved there to reduce unnecessary includes
-// #include <tf2_ros/transform_broadcaster.h>
 
 using namespace std;
 using namespace Eigen;
-// Temporarily commented out - Sophus is reserved for VIO mode which is not currently implemented
-// using namespace Sophus;
 
 #define print_line std::cout << __FILE__ << ", " << __LINE__ << std::endl;
 #define G_m_s2 (9.81)   // Gravaty const in GuangDong/China
@@ -238,7 +232,7 @@ auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> 
       rot_kp.rot[i * 3 + j] = R(i, j);
   }
   // Map<M3D>(rot_kp.rot, 3,3) = R;
-  return move(rot_kp);
+  return rot_kp;
 }
 
 #endif

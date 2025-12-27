@@ -27,19 +27,13 @@ def generate_launch_description():
         'MARS_LVIG.yaml'
     ])
     
-    camera_config = PathJoinSubstitution([
-        pkg_share,
-        'config',
-        'camera_MARS_LVIG.yaml'
-    ])
-    
     # Main mapping node
     mapping_node = Node(
         package='fast_livo',
         executable='fastlivo_mapping',
         name='laserMapping',
         output='screen',
-        parameters=[main_config, camera_config]
+        parameters=[main_config]
     )
     
     # RViz node
@@ -61,4 +55,5 @@ def generate_launch_description():
         mapping_node,
         rviz_node
     ])
+
 

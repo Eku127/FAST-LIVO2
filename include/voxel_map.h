@@ -149,8 +149,8 @@ public:
   bool update_enable_;
 
   VoxelOctoTree(int max_layer, int layer, int points_size_threshold, int max_points_num, float planer_threshold)
-      : max_layer_(max_layer), layer_(layer), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
-        planer_threshold_(planer_threshold)
+      : layer_(layer), planer_threshold_(planer_threshold), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
+        max_layer_(max_layer)
   {
     temp_points_.clear();
     octo_state_ = 0;

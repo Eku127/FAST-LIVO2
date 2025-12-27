@@ -325,7 +325,7 @@ void LIVMapper::handleLIO()
   if (pose_output_en) 
   {
     static bool pos_opend = false;
-    static int ocount = 0;
+    // static int ocount = 0;
     std::ofstream outFile, evoFile;
     if (!pos_opend) 
     {
@@ -522,7 +522,7 @@ void LIVMapper::imu_prop_callback()
         prop_imu_buffer.pop_front();
       }
       last_t_from_lidar_end_time = 0;
-      for (int i = 0; i < prop_imu_buffer.size(); i++)
+      for (size_t i = 0; i < prop_imu_buffer.size(); i++)
       {
         double t_from_lidar_end_time = rclcpp::Time(prop_imu_buffer[i].header.stamp).seconds() - latest_ekf_time;
         double dt = t_from_lidar_end_time - last_t_from_lidar_end_time;

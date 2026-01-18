@@ -111,11 +111,21 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# Find cereal (header-only library)
+find_path(CEREAL_INCLUDE_DIR cereal/cereal.hpp
+  HINTS /usr/include /usr/local/include
+)
+if(NOT CEREAL_INCLUDE_DIR)
+  message(FATAL_ERROR "Cereal headers not found. Please install libcereal-dev")
+endif()
+message(STATUS "Found cereal headers: ${CEREAL_INCLUDE_DIR}")
+
 # Include directories
 include_directories(
   include
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${CEREAL_INCLUDE_DIR}
 )
 
 # Add libraries
@@ -140,6 +150,7 @@ target_include_directories(lio PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${CEREAL_INCLUDE_DIR}
 )
 
 add_library(pre src/preprocess.cpp)

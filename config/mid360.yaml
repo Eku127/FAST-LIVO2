@@ -66,3 +66,28 @@
       interval: 10
       # how many LiDAR frames saved in each pcd file;
       # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+    # Relocalization/Localization mode configuration
+    relocalization:
+      enabled: false                    # true = localization mode, false = SLAM mode
+      prior_map_path: ""                # path to pre-built voxel map (.bin)
+      map_update_mode: "full"           # "none" / "incremental" / "full"
+      initial_pose:                     # initial pose for localization (radians for orientation)
+        x: 0.0
+        y: 0.0
+        z: 0.0
+        roll: 0.0
+        pitch: 0.0
+        yaw: 0.0
+
+    # TF configuration
+    tf:
+      map_frame: "map"
+      odom_frame: "odom"
+      body_frame: "body"
+      publish_tf: true
+
+    # Map save configuration (for SLAM mode)
+    map_save:
+      enabled: true                     # save voxel map on exit
+      path: ""                          # leave empty for default: Log/map/voxelmap.bin

@@ -90,6 +90,27 @@ void LIVMapper::readParameters()
   this->declare_parameter<bool>("publish.pub_effect_point_en", false);
   this->declare_parameter<bool>("publish.dense_map_en", false);
 
+  // Relocalization parameters
+  this->declare_parameter<bool>("relocalization.enabled", false);
+  this->declare_parameter<std::string>("relocalization.prior_map_path", "");
+  this->declare_parameter<std::string>("relocalization.map_update_mode", "full");
+  this->declare_parameter<double>("relocalization.initial_pose.x", 0.0);
+  this->declare_parameter<double>("relocalization.initial_pose.y", 0.0);
+  this->declare_parameter<double>("relocalization.initial_pose.z", 0.0);
+  this->declare_parameter<double>("relocalization.initial_pose.roll", 0.0);
+  this->declare_parameter<double>("relocalization.initial_pose.pitch", 0.0);
+  this->declare_parameter<double>("relocalization.initial_pose.yaw", 0.0);
+
+  // TF parameters
+  this->declare_parameter<std::string>("tf.map_frame", "map");
+  this->declare_parameter<std::string>("tf.odom_frame", "odom");
+  this->declare_parameter<std::string>("tf.body_frame", "body");
+  this->declare_parameter<bool>("tf.publish_tf", true);
+
+  // Map save parameters
+  this->declare_parameter<bool>("map_save.enabled", false);
+  this->declare_parameter<std::string>("map_save.path", "");
+
   this->get_parameter("common.lid_topic", lid_topic);
   this->get_parameter("common.imu_topic", imu_topic);
   this->get_parameter("common.ros_driver_bug_fix", ros_driver_fix_en);
@@ -128,10 +149,39 @@ void LIVMapper::readParameters()
   this->get_parameter("publish.pub_effect_point_en", pub_effect_point_en);
   this->get_parameter("publish.dense_map_en", dense_map_en);
 
+  // Get relocalization parameters
+  this->get_parameter("relocalization.enabled", localization_mode_en_);
+  this->get_parameter("relocalization.prior_map_path", prior_map_path_);
+  std::string map_update_mode_str;
+  this->get_parameter("relocalization.map_update_mode", map_update_mode_str);
+  if (map_update_mode_str == "none") {
+    map_update_mode_ = MAP_UPDATE_NONE;
+  } else if (map_update_mode_str == "incremental") {
+    map_update_mode_ = MAP_UPDATE_INCREMENTAL;
+  } else {
+    map_update_mode_ = MAP_UPDATE_FULL;
+  }
+  this->get_parameter("relocalization.initial_pose.x", init_pose_x_);
+  this->get_parameter("relocalization.initial_pose.y", init_pose_y_);
+  this->get_parameter("relocalization.initial_pose.z", init_pose_z_);
+  this->get_parameter("relocalization.initial_pose.roll", init_pose_roll_);
+  this->get_parameter("relocalization.initial_pose.pitch", init_pose_pitch_);
+  this->get_parameter("relocalization.initial_pose.yaw", init_pose_yaw_);
+
+  // Get TF parameters
+  this->get_parameter("tf.map_frame", map_frame_);
+  this->get_parameter("tf.odom_frame", odom_frame_);
+  this->get_parameter("tf.body_frame", body_frame_);
+  this->get_parameter("tf.publish_tf", publish_tf_);
+
+  // Get map save parameters
+  this->get_parameter("map_save.enabled", map_save_en_);
+  this->get_parameter("map_save.path", map_save_path_);
+
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
 
-void LIVMapper::initializeComponents() 
+void LIVMapper::initializeComponents()
 {
   downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
   extT << VEC_FROM_ARRAY(extrinT);
@@ -152,6 +202,52 @@ void LIVMapper::initializeComponents()
   if (!ba_bg_est_en) p_imu->disable_bias_est();
 
   slam_mode_ = imu_en ? ONLY_LIO : ONLY_LO;
+
+  // Initialize TF broadcaster
+  tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+
+  // Relocalization mode initialization
+  if (localization_mode_en_) {
+    std::cout << GREEN << "[LIVMapper] Localization mode enabled" << RESET << std::endl;
+
+    // Load prior map
+    if (!prior_map_path_.empty()) {
+      std::cout << "[LIVMapper] Loading prior map from: " << prior_map_path_ << std::endl;
+      if (voxelmap_manager->loadMap(prior_map_path_)) {
+        prior_map_loaded_ = true;
+        lidar_map_inited = true;  // Map is already initialized
+        std::cout << GREEN << "[LIVMapper] Prior map loaded successfully" << RESET << std::endl;
+      } else {
+        std::cerr << RED << "[LIVMapper] Failed to load prior map!" << RESET << std::endl;
+      }
+    }
+
+    // Set initial pose
+    _state.pos_end = V3D(init_pose_x_, init_pose_y_, init_pose_z_);
+
+    // Convert RPY to rotation matrix
+    Eigen::AngleAxisd rollAngle(init_pose_roll_, Eigen::Vector3d::UnitX());
+    Eigen::AngleAxisd pitchAngle(init_pose_pitch_, Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd yawAngle(init_pose_yaw_, Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond q = yawAngle * pitchAngle * rollAngle;
+    _state.rot_end = q.toRotationMatrix();
+
+    std::cout << "[LIVMapper] Initial pose set to: "
+              << "pos=[" << init_pose_x_ << ", " << init_pose_y_ << ", " << init_pose_z_ << "], "
+              << "rpy=[" << init_pose_roll_ << ", " << init_pose_pitch_ << ", " << init_pose_yaw_ << "]" << std::endl;
+
+    // Print map update mode
+    std::string mode_str = (map_update_mode_ == MAP_UPDATE_NONE) ? "none" :
+                           (map_update_mode_ == MAP_UPDATE_INCREMENTAL) ? "incremental" : "full";
+    std::cout << "[LIVMapper] Map update mode: " << mode_str << std::endl;
+  } else {
+    std::cout << "[LIVMapper] SLAM mode enabled (mapping)" << std::endl;
+
+    // Set default map save path if not specified
+    if (map_save_en_ && map_save_path_.empty()) {
+      map_save_path_ = std::string(ROOT_DIR) + "Log/map/voxelmap.bin";
+    }
+  }
 }
 
 void LIVMapper::initializeFiles() 
@@ -358,7 +454,7 @@ void LIVMapper::handleLIO()
 
   PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI());
   transformLidar(_state.rot_end, _state.pos_end, feats_down_body, world_lidar);
-  for (size_t i = 0; i < world_lidar->points.size(); i++) 
+  for (size_t i = 0; i < world_lidar->points.size(); i++)
   {
     voxelmap_manager->pv_list_[i].point_w << world_lidar->points[i].x, world_lidar->points[i].y, world_lidar->points[i].z;
     M3D point_crossmat = voxelmap_manager->cross_mat_list_[i];
@@ -367,8 +463,25 @@ void LIVMapper::handleLIO()
           (-point_crossmat) * _state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + _state.cov.block<3, 3>(3, 3);
     voxelmap_manager->pv_list_[i].var = var;
   }
-  voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
-  std::cout << "[ LIO ] Update Voxel Map" << std::endl;
+
+  // Map update based on mode
+  switch (map_update_mode_) {
+    case MAP_UPDATE_NONE:
+      // Pure localization - no map update
+      std::cout << "[ LIO ] Localization mode - no map update" << std::endl;
+      break;
+    case MAP_UPDATE_INCREMENTAL:
+      // Only add new voxels
+      voxelmap_manager->UpdateVoxelMapIncremental(voxelmap_manager->pv_list_);
+      std::cout << "[ LIO ] Incremental map update" << std::endl;
+      break;
+    case MAP_UPDATE_FULL:
+    default:
+      // Full update (normal SLAM behavior)
+      voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
+      std::cout << "[ LIO ] Full map update" << std::endl;
+      break;
+  }
   _pv_list = voxelmap_manager->pv_list_;
   
   double t4 = omp_get_wtime();
@@ -457,8 +570,28 @@ void LIVMapper::savePCD()
     if (pcl_wait_save_intensity->points.size() > 0)
     {
       pcd_writer.writeBinary(raw_points_dir, *pcl_wait_save_intensity);
-      std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir 
+      std::cout << GREEN << "Raw point cloud data saved to: " << raw_points_dir
                 << " with point count: " << pcl_wait_save_intensity->points.size() << RESET << std::endl;
+    }
+  }
+
+  // Save voxel map if enabled (only in SLAM mode, not localization mode)
+  if (map_save_en_ && !localization_mode_en_ && lidar_map_inited) {
+    // Create directory if it doesn't exist
+    std::string map_dir = std::string(ROOT_DIR) + "Log/map/";
+    std::string mkdir_cmd = "mkdir -p " + map_dir;
+    int ret = system(mkdir_cmd.c_str());
+    (void)ret;  // Suppress unused return value warning
+
+    if (map_save_path_.empty()) {
+      map_save_path_ = map_dir + "voxelmap.bin";
+    }
+
+    std::cout << "[LIVMapper] Saving voxel map to: " << map_save_path_ << std::endl;
+    if (voxelmap_manager->saveMap(map_save_path_)) {
+      std::cout << GREEN << "[LIVMapper] Voxel map saved successfully" << RESET << std::endl;
+    } else {
+      std::cerr << RED << "[LIVMapper] Failed to save voxel map" << RESET << std::endl;
     }
   }
 }
@@ -957,24 +1090,69 @@ template <typename T> void LIVMapper::set_posestamp(T &out)
 
 void LIVMapper::publish_odometry()
 {
-  odomAftMapped.header.frame_id = "camera_init";
-  odomAftMapped.child_frame_id = "aft_mapped";
-  odomAftMapped.header.stamp = this->now();
-  set_posestamp(odomAftMapped.pose.pose);
+  auto stamp = this->now();
 
-  static tf2_ros::TransformBroadcaster br(shared_from_this());
-  geometry_msgs::msg::TransformStamped transform;
-  transform.header.stamp = odomAftMapped.header.stamp;
-  transform.header.frame_id = "camera_init";
-  transform.child_frame_id = "aft_mapped";
-  transform.transform.translation.x = _state.pos_end(0);
-  transform.transform.translation.y = _state.pos_end(1);
-  transform.transform.translation.z = _state.pos_end(2);
-  transform.transform.rotation.w = geoQuat.w;
-  transform.transform.rotation.x = geoQuat.x;
-  transform.transform.rotation.y = geoQuat.y;
-  transform.transform.rotation.z = geoQuat.z;
-  br.sendTransform(transform);
+  if (localization_mode_en_) {
+    // === Localization mode: publish map->odom and odom->body ===
+    odomAftMapped.header.frame_id = map_frame_;
+    odomAftMapped.child_frame_id = body_frame_;
+    odomAftMapped.header.stamp = stamp;
+    set_posestamp(odomAftMapped.pose.pose);
+
+    if (publish_tf_) {
+      // 1. map -> odom (localization correction transform)
+      geometry_msgs::msg::TransformStamped map_to_odom;
+      map_to_odom.header.stamp = stamp;
+      map_to_odom.header.frame_id = map_frame_;
+      map_to_odom.child_frame_id = odom_frame_;
+      // For simplicity, map->odom contains the state estimation result
+      // (in a more advanced implementation, this would be the correction factor)
+      map_to_odom.transform.translation.x = _state.pos_end(0);
+      map_to_odom.transform.translation.y = _state.pos_end(1);
+      map_to_odom.transform.translation.z = _state.pos_end(2);
+      map_to_odom.transform.rotation.w = geoQuat.w;
+      map_to_odom.transform.rotation.x = geoQuat.x;
+      map_to_odom.transform.rotation.y = geoQuat.y;
+      map_to_odom.transform.rotation.z = geoQuat.z;
+      tf_broadcaster_->sendTransform(map_to_odom);
+
+      // 2. odom -> body (identity for now, could be IMU propagate increment)
+      geometry_msgs::msg::TransformStamped odom_to_body;
+      odom_to_body.header.stamp = stamp;
+      odom_to_body.header.frame_id = odom_frame_;
+      odom_to_body.child_frame_id = body_frame_;
+      odom_to_body.transform.translation.x = 0.0;
+      odom_to_body.transform.translation.y = 0.0;
+      odom_to_body.transform.translation.z = 0.0;
+      odom_to_body.transform.rotation.w = 1.0;
+      odom_to_body.transform.rotation.x = 0.0;
+      odom_to_body.transform.rotation.y = 0.0;
+      odom_to_body.transform.rotation.z = 0.0;
+      tf_broadcaster_->sendTransform(odom_to_body);
+    }
+  } else {
+    // === SLAM mode: publish camera_init -> body ===
+    odomAftMapped.header.frame_id = "camera_init";
+    odomAftMapped.child_frame_id = "aft_mapped";
+    odomAftMapped.header.stamp = stamp;
+    set_posestamp(odomAftMapped.pose.pose);
+
+    if (publish_tf_) {
+      geometry_msgs::msg::TransformStamped transform;
+      transform.header.stamp = stamp;
+      transform.header.frame_id = "camera_init";
+      transform.child_frame_id = "aft_mapped";
+      transform.transform.translation.x = _state.pos_end(0);
+      transform.transform.translation.y = _state.pos_end(1);
+      transform.transform.translation.z = _state.pos_end(2);
+      transform.transform.rotation.w = geoQuat.w;
+      transform.transform.rotation.x = geoQuat.x;
+      transform.transform.rotation.y = geoQuat.y;
+      transform.transform.rotation.z = geoQuat.z;
+      tf_broadcaster_->sendTransform(transform);
+    }
+  }
+
   pubOdomAftMapped->publish(odomAftMapped);
 }
 

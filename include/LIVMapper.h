@@ -23,6 +23,13 @@ which is included as part of this source code package.
 #include <utils/color.h>
 #include <tf2_ros/transform_broadcaster.h>
 
+// Map update mode for relocalization
+enum MapUpdateMode {
+  MAP_UPDATE_NONE = 0,        // Read-only, pure localization
+  MAP_UPDATE_INCREMENTAL = 1, // Only add new voxels
+  MAP_UPDATE_FULL = 2         // Full update (default SLAM behavior)
+};
+
 class LIVMapper : public rclcpp::Node
 {
 public:
@@ -160,5 +167,32 @@ public:
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
   bool colmap_output_en = false;
+
+  // ===== Relocalization/Localization Mode =====
+  bool localization_mode_en_ = false;      // true = localization mode, false = SLAM mode
+  std::string prior_map_path_ = "";         // path to pre-built voxel map
+  MapUpdateMode map_update_mode_ = MAP_UPDATE_FULL;  // map update strategy
+  bool prior_map_loaded_ = false;           // flag indicating if prior map is loaded
+
+  // Initial pose for localization
+  double init_pose_x_ = 0.0;
+  double init_pose_y_ = 0.0;
+  double init_pose_z_ = 0.0;
+  double init_pose_roll_ = 0.0;
+  double init_pose_pitch_ = 0.0;
+  double init_pose_yaw_ = 0.0;
+
+  // TF frame names
+  std::string map_frame_ = "map";
+  std::string odom_frame_ = "odom";
+  std::string body_frame_ = "body";
+  bool publish_tf_ = true;
+
+  // TF broadcaster
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+
+  // Map save path (for SLAM mode)
+  std::string map_save_path_ = "";
+  bool map_save_en_ = false;
 };
 #endif

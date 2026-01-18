@@ -995,3 +995,160 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
   std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" root voxels"<<RESET<<"\n";
   // std::cout<<RED<<"[DEBUG]: Delete "<<delete_voxel_cout<<" voxels using "<<delete_time<<" s"<<RESET<<"\n";
 }
+
+bool VoxelMapManager::saveMap(const std::string& path)
+{
+  try {
+    std::ofstream ofs(path, std::ios::binary);
+    if (!ofs.is_open()) {
+      std::cerr << RED << "[VoxelMap] Failed to open file for saving: " << path << RESET << std::endl;
+      return false;
+    }
+
+    cereal::BinaryOutputArchive ar(ofs);
+
+    // Write header: magic string and version
+    std::string magic = "FLIVO2MAP";
+    uint32_t version = 1;
+    ar(magic, version);
+
+    // Save config settings
+    ar(config_setting_);
+
+    // Save voxel count
+    uint64_t count = voxel_map_.size();
+    ar(count);
+
+    std::cout << "[VoxelMap] Saving " << count << " voxels to " << path << std::endl;
+
+    // Save voxel data
+    for (const auto& [loc, tree] : voxel_map_) {
+      ar(loc.x, loc.y, loc.z);
+      tree->save(ar);
+    }
+
+    ofs.close();
+    std::cout << GREEN << "[VoxelMap] Map saved successfully to " << path << RESET << std::endl;
+    return true;
+
+  } catch (const std::exception& e) {
+    std::cerr << RED << "[VoxelMap] Error saving map: " << e.what() << RESET << std::endl;
+    return false;
+  }
+}
+
+bool VoxelMapManager::loadMap(const std::string& path)
+{
+  try {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+      std::cerr << RED << "[VoxelMap] Failed to open file for loading: " << path << RESET << std::endl;
+      return false;
+    }
+
+    cereal::BinaryInputArchive ar(ifs);
+
+    // Read and verify header
+    std::string magic;
+    uint32_t version;
+    ar(magic, version);
+
+    if (magic != "FLIVO2MAP") {
+      std::cerr << RED << "[VoxelMap] Invalid map file format" << RESET << std::endl;
+      return false;
+    }
+
+    if (version != 1) {
+      std::cerr << RED << "[VoxelMap] Unsupported map version: " << version << RESET << std::endl;
+      return false;
+    }
+
+    // Load config settings
+    ar(config_setting_);
+
+    // Clear existing map
+    for (auto& [loc, tree] : voxel_map_) {
+      delete tree;
+    }
+    voxel_map_.clear();
+
+    // Load voxel count
+    uint64_t count;
+    ar(count);
+
+    std::cout << "[VoxelMap] Loading " << count << " voxels from " << path << std::endl;
+
+    // Load voxel data
+    for (uint64_t i = 0; i < count; i++) {
+      int64_t x, y, z;
+      ar(x, y, z);
+      VOXEL_LOCATION loc(x, y, z);
+
+      VoxelOctoTree* tree = new VoxelOctoTree();
+      tree->load(ar);
+      voxel_map_[loc] = tree;
+    }
+
+    ifs.close();
+    std::cout << GREEN << "[VoxelMap] Map loaded successfully from " << path
+              << " with " << voxel_map_.size() << " voxels" << RESET << std::endl;
+    return true;
+
+  } catch (const std::exception& e) {
+    std::cerr << RED << "[VoxelMap] Error loading map: " << e.what() << RESET << std::endl;
+    return false;
+  }
+}
+
+void VoxelMapManager::UpdateVoxelMapIncremental(const std::vector<pointWithVar> &input_points)
+{
+  float voxel_size = config_setting_.max_voxel_size_;
+  float planer_threshold = config_setting_.planner_threshold_;
+  int max_layer = config_setting_.max_layer_;
+  int max_points_num = config_setting_.max_points_num_;
+  std::vector<int> layer_init_num = config_setting_.layer_init_num_;
+
+  int new_voxels = 0;
+  uint plsize = input_points.size();
+
+  for (uint i = 0; i < plsize; i++)
+  {
+    const pointWithVar p_v = input_points[i];
+    float loc_xyz[3];
+    for (int j = 0; j < 3; j++)
+    {
+      loc_xyz[j] = p_v.point_w[j] / voxel_size;
+      if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
+    }
+    VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+
+    // Only add new voxels, don't modify existing ones
+    if (voxel_map_.find(position) == voxel_map_.end())
+    {
+      VoxelOctoTree *octo_tree = new VoxelOctoTree(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
+      voxel_map_[position] = octo_tree;
+      voxel_map_[position]->layer_init_num_ = layer_init_num;
+      voxel_map_[position]->quater_length_ = voxel_size / 4;
+      voxel_map_[position]->voxel_center_[0] = (0.5 + position.x) * voxel_size;
+      voxel_map_[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
+      voxel_map_[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
+      voxel_map_[position]->temp_points_.push_back(p_v);
+      voxel_map_[position]->new_points_++;
+      new_voxels++;
+    }
+    // Existing voxels are NOT updated in incremental mode
+  }
+
+  // Initialize newly added voxels
+  for (auto& [loc, tree] : voxel_map_)
+  {
+    if (!tree->init_octo_ && tree->new_points_ > 0)
+    {
+      tree->init_octo_tree();
+    }
+  }
+
+  if (new_voxels > 0) {
+    std::cout << "[VoxelMap] Incremental update: added " << new_voxels << " new voxels" << std::endl;
+  }
+}

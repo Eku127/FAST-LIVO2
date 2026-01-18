@@ -27,6 +27,12 @@ which is included as part of this source code package.
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+// Cereal serialization headers
+#include <cereal/types/vector.hpp>
+#include <cereal/types/unordered_map.hpp>
+#include <cereal/types/string.hpp>
+#include <cereal/archives/binary.hpp>
+
 #define VOXELMAP_HASH_P 116101
 #define VOXELMAP_MAX_N 10000000000
 
@@ -49,6 +55,14 @@ typedef struct VoxelMapConfig
   double sliding_thresh;
   bool map_sliding_en;
   int half_map_size;
+
+  // Cereal serialization
+  template<class Archive>
+  void serialize(Archive& ar) {
+    ar(max_voxel_size_, max_layer_, max_iterations_, layer_init_num_,
+       max_points_num_, planner_threshold_, beam_err_, dept_err_,
+       sigma_num_, is_pub_plane_map_, sliding_thresh, map_sliding_en, half_map_size);
+  }
 } VoxelMapConfig;
 
 typedef struct PointToPlane
@@ -91,6 +105,34 @@ typedef struct VoxelPlane
     center_ = Eigen::Vector3d::Zero();
     normal_ = Eigen::Vector3d::Zero();
   }
+
+  // Cereal serialization
+  template<class Archive>
+  void save(Archive& ar) const {
+    // Serialize Eigen vectors as raw data
+    for (int i = 0; i < 3; ++i) ar(center_[i]);
+    for (int i = 0; i < 3; ++i) ar(normal_[i]);
+    for (int i = 0; i < 3; ++i) ar(y_normal_[i]);
+    for (int i = 0; i < 3; ++i) ar(x_normal_[i]);
+    // Serialize covariance matrix
+    for (int i = 0; i < 9; ++i) ar(covariance_.data()[i]);
+    // Serialize plane_var matrix
+    for (int i = 0; i < 36; ++i) ar(plane_var_.data()[i]);
+    ar(radius_, min_eigen_value_, mid_eigen_value_, max_eigen_value_,
+       d_, points_size_, is_plane_, is_init_, id_, is_update_);
+  }
+
+  template<class Archive>
+  void load(Archive& ar) {
+    for (int i = 0; i < 3; ++i) ar(center_[i]);
+    for (int i = 0; i < 3; ++i) ar(normal_[i]);
+    for (int i = 0; i < 3; ++i) ar(y_normal_[i]);
+    for (int i = 0; i < 3; ++i) ar(x_normal_[i]);
+    for (int i = 0; i < 9; ++i) ar(covariance_.data()[i]);
+    for (int i = 0; i < 36; ++i) ar(plane_var_.data()[i]);
+    ar(radius_, min_eigen_value_, mid_eigen_value_, max_eigen_value_,
+       d_, points_size_, is_plane_, is_init_, id_, is_update_);
+  }
 } VoxelPlane;
 
 class VOXEL_LOCATION
@@ -101,6 +143,12 @@ public:
   VOXEL_LOCATION(int64_t vx = 0, int64_t vy = 0, int64_t vz = 0) : x(vx), y(vy), z(vz) {}
 
   bool operator==(const VOXEL_LOCATION &other) const { return (x == other.x && y == other.y && z == other.z); }
+
+  // Cereal serialization
+  template<class Archive>
+  void serialize(Archive& ar) {
+    ar(x, y, z);
+  }
 };
 
 // Hash value
@@ -180,6 +228,70 @@ public:
 
   VoxelOctoTree *find_correspond(Eigen::Vector3d pw);
   VoxelOctoTree *Insert(const pointWithVar &pv);
+
+  // Cereal serialization for map save/load
+  template<class Archive>
+  void save(Archive& ar) const {
+    ar(layer_, octo_state_, quater_length_, planer_threshold_,
+       points_size_threshold_, update_size_threshold_, max_points_num_,
+       max_layer_, new_points_, init_octo_, update_enable_);
+    ar(voxel_center_[0], voxel_center_[1], voxel_center_[2]);
+    ar(layer_init_num_);
+
+    // Serialize plane
+    bool has_plane = (plane_ptr_ != nullptr);
+    ar(has_plane);
+    if (has_plane) {
+      ar(*plane_ptr_);
+    }
+
+    // Serialize children for branch nodes
+    if (octo_state_ == 1) {
+      for (int i = 0; i < 8; i++) {
+        bool has_child = (leaves_[i] != nullptr);
+        ar(has_child);
+        if (has_child) {
+          leaves_[i]->save(ar);
+        }
+      }
+    }
+  }
+
+  template<class Archive>
+  void load(Archive& ar) {
+    ar(layer_, octo_state_, quater_length_, planer_threshold_,
+       points_size_threshold_, update_size_threshold_, max_points_num_,
+       max_layer_, new_points_, init_octo_, update_enable_);
+    ar(voxel_center_[0], voxel_center_[1], voxel_center_[2]);
+    ar(layer_init_num_);
+
+    // Initialize leaves to nullptr
+    for (int i = 0; i < 8; i++) {
+      leaves_[i] = nullptr;
+    }
+
+    // Deserialize plane
+    bool has_plane;
+    ar(has_plane);
+    if (has_plane) {
+      plane_ptr_ = new VoxelPlane();
+      ar(*plane_ptr_);
+    } else {
+      plane_ptr_ = nullptr;
+    }
+
+    // Deserialize children for branch nodes
+    if (octo_state_ == 1) {
+      for (int i = 0; i < 8; i++) {
+        bool has_child;
+        ar(has_child);
+        if (has_child) {
+          leaves_[i] = new VoxelOctoTree();
+          leaves_[i]->load(ar);
+        }
+      }
+    }
+  }
 };
 
 void loadVoxelConfig(rclcpp::Node* node, VoxelMapConfig &voxel_config);
@@ -234,6 +346,13 @@ public:
   V3F RGBFromVoxel(const V3D &input_point);
 
   void UpdateVoxelMap(const std::vector<pointWithVar> &input_points);
+
+  // Incremental map update - only adds new voxels, doesn't modify existing ones
+  void UpdateVoxelMapIncremental(const std::vector<pointWithVar> &input_points);
+
+  // Map save/load for relocalization
+  bool saveMap(const std::string& path);
+  bool loadMap(const std::string& path);
 
   void BuildResidualListOMP(std::vector<pointWithVar> &pv_list, std::vector<PointToPlane> &ptpl_list);
 

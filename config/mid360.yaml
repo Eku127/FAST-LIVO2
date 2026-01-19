@@ -17,7 +17,7 @@
     preprocess:
       point_filter_num: 1
       filter_size_surf: 0.1
-      lidar_type: 1 # Livox LiDAR
+      lidar_type: 8
       scan_line: 4
       blind: 0.2
 

@@ -282,7 +282,7 @@ void LIVMapper::initializeSubscribersAndPublishers()
 {
   using std::placeholders::_1;
   
-  if (p_pre->lidar_type == AVIA) {
+  if (p_pre->lidar_type == AVIA || p_pre->lidar_type == MID360) {
     sub_pcl_livox = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
       lid_topic, 200000, std::bind(&LIVMapper::livox_pcl_cbk, this, _1));
   } else {

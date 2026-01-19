@@ -182,6 +182,7 @@ public:
 
 private:
   void avia_handler(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg);
+  void mid360_handler(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg);
   void oust64_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void xt32_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);

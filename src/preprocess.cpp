@@ -58,7 +58,20 @@ void Preprocess::set(bool feat_en, int lid_type, double bld, int pfilt_num)
 
 void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg, PointCloudXYZI::Ptr &pcl_out)
 {
-  avia_handler(msg);
+  switch (lidar_type)
+  {
+  case AVIA:
+    avia_handler(msg);
+    break;
+
+  case MID360:
+    mid360_handler(msg);
+    break;
+
+  default:
+    printf("Error LiDAR Type: %d \n", lidar_type);
+    break;
+  }
   *pcl_out = pl_surf;
 }
 
@@ -198,6 +211,69 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::ConstShar
             // if (i % 100 == 0 || i == 0) printf("pl_full[i].curvature: %f \n",
             // pl_full[i].curvature);
           }
+        }
+      }
+    }
+  }
+  printf("[ Preprocess ] Output point number: %zu \n", pl_surf.points.size());
+}
+
+void Preprocess::mid360_handler(const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr msg)
+{
+  pl_surf.clear();
+  pl_corn.clear();
+  pl_full.clear();
+
+  int plsize = msg->point_num;
+  printf("[ Preprocess ] Input point number: %d \n", plsize);
+
+  pl_surf.reserve(plsize);
+
+  uint valid_num = 0;
+
+  // Livox MID360 标签过滤配置 (根据协议文档 1.2.1.3.4)
+  // bit 0-1: 粘连点云, bit 2-3: 雨雾灰尘, bit 4-5: 其它属性
+  // 置信度: 0=优, 1=中, 2=差, 3=保留
+  const int MAX_ADHESIVE_CONFIDENCE = 0;   // 粘连点云: 0=仅优, 1=优和中, 2=全部
+  const int MAX_RAIN_FOG_CONFIDENCE = 0;   // 雨雾灰尘: 0=仅优, 1=优和中, 2=全部
+  const int MAX_OTHER_CONFIDENCE = 0;      // 其它属性: 0=仅优, 1=优和中, 2=全部
+
+  auto is_tag_valid = [&](uint8_t tag) -> bool {
+    if ((tag & 0x03) > MAX_ADHESIVE_CONFIDENCE) return false;  // bit 0-1
+    if (((tag & 0x0C) >> 2) > MAX_RAIN_FOG_CONFIDENCE) return false;  // bit 2-3
+    if (((tag & 0x30) >> 4) > MAX_OTHER_CONFIDENCE) return false;  // bit 4-5
+    return true;
+  };
+
+  for (uint i = 0; i < static_cast<uint>(plsize); i++)
+  {
+    if (msg->points[i].line >= N_SCANS) continue;
+
+    if (is_tag_valid(msg->points[i].tag))
+    {
+      // Check for valid point coordinates
+      if (std::abs(msg->points[i].x) > 1e-6 &&
+          std::abs(msg->points[i].y) > 1e-6 &&
+          std::abs(msg->points[i].z) > 1e-6)
+      {
+        double dist = msg->points[i].x * msg->points[i].x +
+                      msg->points[i].y * msg->points[i].y +
+                      msg->points[i].z * msg->points[i].z;
+
+        // Check blind spot range
+        if ((dist > blind_sqr))
+        {
+          if (valid_num % point_filter_num == 0)
+          {
+            PointType pt;
+            pt.x = msg->points[i].x;
+            pt.y = msg->points[i].y;
+            pt.z = msg->points[i].z;
+            pt.intensity = msg->points[i].reflectivity;
+            pt.curvature = msg->points[i].offset_time / float(1000000);
+            pl_surf.emplace_back(pt);
+          }
+          valid_num++;
         }
       }
     }

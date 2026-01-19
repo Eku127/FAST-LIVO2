@@ -13,14 +13,20 @@ which is included as part of this source code package.
 #ifndef COMMON_LIB_H
 #define COMMON_LIB_H
 
+// C++ Standard Library
 #include <deque>
+#include <string>
+
+// Eigen
+#include <Eigen/Eigen>
+
+// ROS2 Message Types
+#include <sensor_msgs/msg/imu.hpp>
+
+// Project Headers
 #include <utils/so3_math.h>
 #include <utils/types.h>
 #include <utils/color.h>
-#include <sensor_msgs/msg/imu.hpp>
-
-using namespace std;
-using namespace Eigen;
 
 #define print_line std::cout << __FILE__ << ", " << __LINE__ << std::endl;
 #define G_m_s2 (9.81)   // Gravaty const in GuangDong/China
@@ -30,7 +36,7 @@ using namespace Eigen;
 #define SIZE_SMALL (100)
 #define VEC_FROM_ARRAY(v) v[0], v[1], v[2]
 #define MAT_FROM_ARRAY(v) v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]
-#define DEBUG_FILE_DIR(name) (string(string(ROOT_DIR) + "Log/" + name))
+#define DEBUG_FILE_DIR(name) (std::string(std::string(ROOT_DIR) + "Log/" + name))
 
 enum LID_TYPE
 {
@@ -59,7 +65,7 @@ enum EKF_STATE
 struct MeasureGroup
 {
   double lio_time;
-  deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
+  std::deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu;
   MeasureGroup()
   {
     lio_time = 0.0;
@@ -74,7 +80,7 @@ struct LidarMeasureGroup
   PointCloudXYZI::Ptr lidar;
   PointCloudXYZI::Ptr pcl_proc_cur;
   PointCloudXYZI::Ptr pcl_proc_next;
-  deque<struct MeasureGroup> measures;
+  std::deque<struct MeasureGroup> measures;
   EKF_STATE lio_vio_flg;
   int lidar_scan_index_now;
 
@@ -121,16 +127,16 @@ struct StatesGroup
 {
   StatesGroup()
   {
-    this->rot_end = M3D::Identity();
-    this->pos_end = V3D::Zero();
-    this->vel_end = V3D::Zero();
-    this->bias_g = V3D::Zero();
-    this->bias_a = V3D::Zero();
-    this->gravity = V3D::Zero();
+    this->rot_end = Eigen::Matrix3d::Identity();
+    this->pos_end = Eigen::Vector3d::Zero();
+    this->vel_end = Eigen::Vector3d::Zero();
+    this->bias_g = Eigen::Vector3d::Zero();
+    this->bias_a = Eigen::Vector3d::Zero();
+    this->gravity = Eigen::Vector3d::Zero();
     this->inv_expo_time = 1.0;
-    this->cov = MD(DIM_STATE, DIM_STATE)::Identity() * INIT_COV;
+    this->cov = Eigen::Matrix<double, DIM_STATE, DIM_STATE>::Identity() * INIT_COV;
     this->cov(6, 6) = 0.00001;
-    this->cov.block<9, 9>(10, 10) = MD(9, 9)::Identity() * 0.00001;
+    this->cov.block<9, 9>(10, 10) = Eigen::Matrix<double, 9, 9>::Identity() * 0.00001;
   };
 
   StatesGroup(const StatesGroup &b)
@@ -158,7 +164,7 @@ struct StatesGroup
     return *this;
   };
 
-  StatesGroup operator+(const Matrix<double, DIM_STATE, 1> &state_add)
+  StatesGroup operator+(const Eigen::Matrix<double, DIM_STATE, 1> &state_add)
   {
     StatesGroup a;
     a.rot_end = this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
@@ -173,7 +179,7 @@ struct StatesGroup
     return a;
   };
 
-  StatesGroup &operator+=(const Matrix<double, DIM_STATE, 1> &state_add)
+  StatesGroup &operator+=(const Eigen::Matrix<double, DIM_STATE, 1> &state_add)
   {
     this->rot_end = this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
     this->pos_end += state_add.block<3, 1>(3, 0);
@@ -185,9 +191,9 @@ struct StatesGroup
     return *this;
   };
 
-  Matrix<double, DIM_STATE, 1> operator-(const StatesGroup &b)
+  Eigen::Matrix<double, DIM_STATE, 1> operator-(const StatesGroup &b)
   {
-    Matrix<double, DIM_STATE, 1> a;
+    Eigen::Matrix<double, DIM_STATE, 1> a;
     M3D rotd(b.rot_end.transpose() * this->rot_end);
     a.block<3, 1>(0, 0) = Log(rotd);
     a.block<3, 1>(3, 0) = this->pos_end - b.pos_end;
@@ -213,12 +219,12 @@ struct StatesGroup
   V3D bias_g;                               // gyroscope bias
   V3D bias_a;                               // accelerator bias
   V3D gravity;                              // the estimated gravity acceleration
-  Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
+  Eigen::Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
 };
 
 template <typename T>
-auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> &g, const Matrix<T, 3, 1> &v, const Matrix<T, 3, 1> &p,
-                const Matrix<T, 3, 3> &R)
+auto set_pose6d(const double t, const Eigen::Matrix<T, 3, 1> &a, const Eigen::Matrix<T, 3, 1> &g, const Eigen::Matrix<T, 3, 1> &v, const Eigen::Matrix<T, 3, 1> &p,
+                const Eigen::Matrix<T, 3, 3> &R)
 {
   Pose6D rot_kp;
   rot_kp.offset_time = t;

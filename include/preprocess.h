@@ -13,11 +13,20 @@ which is included as part of this source code package.
 #ifndef PREPROCESS_H_
 #define PREPROCESS_H_
 
-#include "common_lib.h"
-#include "livox_ros_driver2/msg/custom_msg.hpp"
+// C++ Standard Library
+
+// PCL
 #include <pcl_conversions/pcl_conversions.h>
+
+// ROS2 Core
 #include <rclcpp/rclcpp.hpp>
+
+// ROS2 Message Types
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+
+// Project Headers
+#include "common_lib.h"
 
 using namespace std;
 
@@ -164,7 +173,7 @@ public:
   // sensor_msgs::PointCloud2::ConstPtr pointcloud;
   PointCloudXYZI pl_full, pl_corn, pl_surf;
   PointCloudXYZI pl_buff[128]; // maximum 128 line lidar
-  vector<orgtype> typess[128]; // maximum 128 line lidar
+  std::vector<orgtype> typess[128]; // maximum 128 line lidar
   int lidar_type, point_filter_num, N_SCANS;
   
   double blind, blind_sqr;

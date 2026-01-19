@@ -18,6 +18,8 @@ which is included as part of this source code package.
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
+using namespace Eigen;
+
 LIVMapper::LIVMapper()
     : Node("laserMapping"),
       extT(0, 0, 0),

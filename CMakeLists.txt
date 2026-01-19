@@ -105,20 +105,24 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # Find non-ROS dependencies
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
-# Find cereal (header-only library)
-find_path(CEREAL_INCLUDE_DIR cereal/cereal.hpp
-  HINTS /usr/include /usr/local/include
-)
-if(NOT CEREAL_INCLUDE_DIR)
-  message(FATAL_ERROR "Cereal headers not found. Please install libcereal-dev")
+# Add small_gicp subdirectory
+# Note: small_gicp CMakeLists.txt has been optimized with appropriate defaults
+# (only BUILD_HELPER enabled, all tests/examples/benchmarks disabled)
+add_subdirectory(thirdparty/small_gicp)
+
+# Use cereal from thirdparty
+set(CEREAL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cereal/include")
+if(NOT EXISTS "${CEREAL_INCLUDE_DIR}/cereal/cereal.hpp")
+  message(FATAL_ERROR "Cereal headers not found at ${CEREAL_INCLUDE_DIR}/cereal/cereal.hpp")
 endif()
-message(STATUS "Found cereal headers: ${CEREAL_INCLUDE_DIR}")
+message(STATUS "Using cereal from thirdparty: ${CEREAL_INCLUDE_DIR}")
 
 # Include directories
 include_directories(
@@ -248,9 +252,36 @@ if(mimalloc_FOUND)
   target_link_libraries(fastlivo_mapping mimalloc)
 endif()
 
+# Add GICP localization executable
+add_executable(gicp_localization_node src/gicp_localization_node.cpp)
+ament_target_dependencies(gicp_localization_node
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  std_msgs
+  std_srvs
+  pcl_conversions
+  tf2_geometry_msgs
+  livox_ros_driver2
+)
+target_include_directories(gicp_localization_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+)
+target_link_libraries(gicp_localization_node
+  ${PCL_LIBRARIES}
+  ${Boost_LIBRARIES}
+  ${OpenMP_CXX_LIBRARIES}
+  small_gicp
+)
+
+
 # Install targets
 install(TARGETS
   fastlivo_mapping
+  gicp_localization_node
   lio
   pre
   imu_proc
@@ -285,6 +316,7 @@ ament_export_dependencies(
   nav_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   visualization_msgs
   tf2
   tf2_ros

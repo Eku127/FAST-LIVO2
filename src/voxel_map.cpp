@@ -10,9 +10,20 @@ This file is subject to the terms and conditions outlined in the 'LICENSE' file,
 which is included as part of this source code package.
 */
 
+// Project Headers
 #include "voxel_map.h"
+
+// C++ Standard Library
+#include <fstream>
+
+// TF2
 #include <tf2/LinearMath/Quaternion.h>
+
+// Project Headers
 #include <utils/color.h>
+
+using namespace Eigen;
+using namespace std;
 
 void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc, Eigen::Matrix3d &cov)
 {

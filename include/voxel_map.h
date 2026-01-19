@@ -13,25 +13,28 @@ which is included as part of this source code package.
 #ifndef VOXEL_MAP_H_
 #define VOXEL_MAP_H_
 
-#include "common_lib.h"
-#include <Eigen/Dense>
-#include <fstream>
-#include <math.h>
-#include <mutex>
-#include <omp.h>
-#include <pcl/common/io.h>
-#include <rclcpp/rclcpp.hpp>
-#include <thread>
-#include <unistd.h>
+// C++ Standard Library
 #include <unordered_map>
+
+// Third-party Libraries
+#include <Eigen/Dense>
+#include <pcl/common/io.h>
+
+// ROS2 Core
+#include <rclcpp/rclcpp.hpp>
+
+// ROS2 Message Types
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
-// Cereal serialization headers
+// Serialization
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_map.hpp>
 #include <cereal/types/string.hpp>
 #include <cereal/archives/binary.hpp>
+
+// Project Headers
+#include "common_lib.h"
 
 #define VOXELMAP_HASH_P 116101
 #define VOXELMAP_MAX_N 10000000000

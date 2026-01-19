@@ -13,15 +13,36 @@ which is included as part of this source code package.
 #ifndef LIV_MAPPER_H
 #define LIV_MAPPER_H
 
+// C++ Standard Library
+#include <deque>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+// Eigen
+#include <Eigen/Eigen>
+
+// PCL
+#include <pcl/filters/voxel_grid.h>
+
+// ROS2 Core
+#include <rclcpp/rclcpp.hpp>
+
+// ROS2 TF
+#include <tf2_ros/transform_broadcaster.h>
+
+// ROS2 Message Types
+#include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+
+// Project Headers
 #include "IMU_Processing.h"
 #include "preprocess.h"
 #include "voxel_map.h"
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include "livox_ros_driver2/msg/custom_msg.hpp"
-#include <pcl/filters/voxel_grid.h>
 #include <utils/color.h>
-#include <tf2_ros/transform_broadcaster.h>
 
 // Map update mode for relocalization
 enum MapUpdateMode {

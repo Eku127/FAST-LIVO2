@@ -10,7 +10,12 @@ This file is subject to the terms and conditions outlined in the 'LICENSE' file,
 which is included as part of this source code package.
 */
 
+// Project Headers
 #include "preprocess.h"
+
+// C++ Standard Library
+#include <iostream>
+#include <cmath>
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
@@ -142,7 +147,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::ConstShar
       if (pl_buff[j].size() <= 5) continue;
       pcl::PointCloud<PointType> &pl = pl_buff[j];
       plsize = pl.size();
-      vector<orgtype> &types = typess[j];
+      std::vector<orgtype> &types = typess[j];
       types.clear();
       types.resize(plsize);
       plsize--;
@@ -743,7 +748,7 @@ void Preprocess::robosense_handler(const sensor_msgs::msg::PointCloud2::ConstSha
   });
 }
 
-void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &types)
+void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, std::vector<orgtype> &types)
 {
   int plsize = pl.size();
   int plsize2;
@@ -997,7 +1002,7 @@ int Preprocess::plane_judge(const PointCloudXYZI &pl, vector<orgtype> &types, ui
   // i_nex = i_cur;
 
   double two_dis = 0.0;
-  vector<double> disarr;
+  std::vector<double> disarr;
   disarr.reserve(20);
 
   for (i_nex = i_cur; i_nex < i_cur + group_size; i_nex++)
@@ -1097,7 +1102,7 @@ int Preprocess::plane_judge(const PointCloudXYZI &pl, vector<orgtype> &types, ui
   return 1;
 }
 
-bool Preprocess::edge_jump_judge(const PointCloudXYZI &/*pl*/, vector<orgtype> &types, uint i, Surround nor_dir)
+bool Preprocess::edge_jump_judge(const PointCloudXYZI &/*pl*/, std::vector<orgtype> &types, uint i, Surround nor_dir)
 {
   if (nor_dir == 0)
   {

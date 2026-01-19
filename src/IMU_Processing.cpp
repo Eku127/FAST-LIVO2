@@ -14,6 +14,9 @@ which is included as part of this source code package.
 #include <rclcpp/rclcpp.hpp>
 #include <cassert>
 
+using namespace Eigen;
+using namespace std;
+
 ImuProcess::ImuProcess() : imu_need_init(true), Eye3d(M3D::Identity()),
                            Zero3d(0, 0, 0), b_first_frame(true)
 {

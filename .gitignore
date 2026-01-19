@@ -1,2 +1,5 @@
 Log/*
 build/*
+.cache
+install
+log 

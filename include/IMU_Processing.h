@@ -13,12 +13,22 @@ which is included as part of this source code package.
 #ifndef IMU_PROCESSING_H
 #define IMU_PROCESSING_H
 
-#include <Eigen/Eigen>
-#include "common_lib.h"
+// C++ Standard Library
 #include <condition_variable>
-#include <nav_msgs/msg/odometry.hpp>
-#include <utils/so3_math.h>
 #include <fstream>
+#include <string>
+#include <vector>
+
+// Eigen
+#include <Eigen/Eigen>
+
+// ROS2 Message Types
+#include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+
+// Project Headers
+#include "common_lib.h"
+#include <utils/so3_math.h>
 inline bool time_list(PointType &x, PointType &y) { return (x.curvature < y.curvature); }
 
 /// *************IMU Process and undistortion
@@ -48,7 +58,7 @@ public:
   void Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_);
   void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
 
-  ofstream fout_imu;
+  std::ofstream fout_imu;
   double IMU_mean_acc_norm;
   V3D unbiased_gyr;
 
@@ -70,7 +80,7 @@ private:
   PointCloudXYZI pcl_wait_proc;
   sensor_msgs::msg::Imu::ConstSharedPtr last_imu;
   PointCloudXYZI::Ptr cur_pcl_un_;
-  vector<Pose6D> IMUpose;
+  std::vector<Pose6D> IMUpose;
   M3D Lid_rot_to_IMU;
   V3D Lid_offset_to_IMU;
   V3D mean_acc;

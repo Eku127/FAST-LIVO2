@@ -1,7 +1,13 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+// C++ Standard Library
+#include <vector>
+
+// Eigen
 #include <Eigen/Eigen>
+
+// PCL
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 

@@ -111,6 +111,10 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# Offline processing dependencies
+find_package(rosbag2_cpp QUIET)
+find_package(yaml-cpp QUIET)
+
 # Include directories
 include_directories(
   include
@@ -235,6 +239,92 @@ ament_target_dependencies(fastlivo_mapping livox_ros_driver2)
 # Link mimalloc if found
 if(mimalloc_FOUND)
   target_link_libraries(fastlivo_mapping mimalloc)
+endif()
+
+# ============================================
+# Offline Processing Module
+# ============================================
+if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
+  message(STATUS "Building offline processing module")
+  
+  # Offline library
+  add_library(livo2_offline STATIC
+    src/offline/bag_reader.cpp
+    src/offline/offline_liv_mapper.cpp
+  )
+  
+  target_include_directories(livo2_offline PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${EIGEN3_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
+  )
+  
+  target_link_libraries(livo2_offline
+    lio
+    pre
+    imu_proc
+    ${PCL_LIBRARIES}
+    ${Boost_LIBRARIES}
+    yaml-cpp
+  )
+  
+  ament_target_dependencies(livo2_offline
+    rclcpp
+    rosbag2_cpp
+    sensor_msgs
+    nav_msgs
+    geometry_msgs
+    pcl_conversions
+    livox_ros_driver2
+    Eigen3
+    PCL
+  )
+  
+  # Offline executable
+  add_executable(run_livo2_offline src/app/run_livo2_offline.cpp)
+  
+  target_include_directories(run_livo2_offline PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${EIGEN3_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
+  )
+  
+  target_link_libraries(run_livo2_offline
+    livo2_offline
+    ${PCL_LIBRARIES}
+    ${Boost_LIBRARIES}
+  )
+  
+  ament_target_dependencies(run_livo2_offline
+    rclcpp
+    rosbag2_cpp
+    sensor_msgs
+    nav_msgs
+    livox_ros_driver2
+  )
+  
+  # Link mimalloc if found
+  if(mimalloc_FOUND)
+    target_link_libraries(run_livo2_offline mimalloc)
+  endif()
+  
+  # Link OpenMP if found
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(livo2_offline ${OpenMP_CXX_LIBRARIES})
+    target_link_libraries(run_livo2_offline ${OpenMP_CXX_LIBRARIES})
+  endif()
+  
+  # Install offline executables
+  install(TARGETS
+    run_livo2_offline
+    livo2_offline
+    DESTINATION lib/${PROJECT_NAME}
+  )
+  
+else()
+  message(STATUS "Skipping offline module (missing rosbag2_cpp or yaml-cpp)")
 endif()
 
 # Install targets

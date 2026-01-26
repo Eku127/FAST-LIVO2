@@ -19,7 +19,7 @@
       filter_size_surf: 0.1
       lidar_type: 1 # Livox LiDAR
       scan_line: 4
-      blind: 0.2
+      blind: 0.3
 
     imu:
       imu_en: true
@@ -34,7 +34,7 @@
       dept_err: 0.02
       beam_err: 0.05
       min_eigen_value: 0.0025 # 0.005
-      voxel_size: 0.2
+      voxel_size: 0.15
       max_layer: 2
       max_points_num: 50
       layer_init_num: [5, 5, 5, 5, 5]

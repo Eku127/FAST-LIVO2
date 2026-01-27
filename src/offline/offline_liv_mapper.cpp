@@ -27,13 +27,27 @@ OfflineLIVMapper::OfflineLIVMapper(const OfflineConfig& config, const std::strin
 }
 
 OfflineLIVMapper::~OfflineLIVMapper() {
-    // Clean up voxel map
+    // Note: voxel_map_ is always empty because VoxelMapManager uses its own copy.
+    // The actual cleanup is done in shutdown() which clears voxelmap_manager_->voxel_map_.
+    // This loop is kept for safety in case the design changes.
     for (auto& pair : voxel_map_) {
         if (pair.second) {
             delete pair.second;
+            pair.second = nullptr;
         }
     }
     voxel_map_.clear();
+    
+    // If shutdown() wasn't called, clean up VoxelMapManager's voxel map here
+    if (voxelmap_manager_) {
+        for (auto& pair : voxelmap_manager_->voxel_map_) {
+            if (pair.second) {
+                delete pair.second;
+                pair.second = nullptr;
+            }
+        }
+        voxelmap_manager_->voxel_map_.clear();
+    }
 }
 
 void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
@@ -83,6 +97,23 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
         if (publish["dense_map_en"]) offline_config_.dense_map = publish["dense_map_en"].as<bool>();
     }
     
+    // Offline settings
+    if (params["offline"]) {
+        auto offline = params["offline"];
+        if (offline["keyframe_delta_trans"]) 
+            offline_config_.keyframe_delta_trans = offline["keyframe_delta_trans"].as<double>();
+        if (offline["keyframe_delta_deg"]) 
+            offline_config_.keyframe_delta_deg = offline["keyframe_delta_deg"].as<double>();
+        if (offline["output_dir"]) 
+            offline_config_.output_dir = offline["output_dir"].as<std::string>();
+        if (offline["save_keyframes"]) 
+            offline_config_.save_keyframes = offline["save_keyframes"].as<bool>();
+        if (offline["save_global_map"]) 
+            offline_config_.save_global_map = offline["save_global_map"].as<bool>();
+        if (offline["global_map_resolution"]) 
+            offline_config_.global_map_resolution = offline["global_map_resolution"].as<double>();
+    }
+    
     // Extrinsics
     ext_t_ = Eigen::Vector3d::Zero();
     ext_r_ = Eigen::Matrix3d::Identity();
@@ -107,6 +138,11 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
     std::cout << "  LiDAR topic: " << offline_config_.lidar_topic << std::endl;
     std::cout << "  IMU topic: " << offline_config_.imu_topic << std::endl;
     std::cout << "  IMU enabled: " << (imu_en_ ? "yes" : "no") << std::endl;
+    std::cout << "  Keyframe delta trans: " << offline_config_.keyframe_delta_trans << " m" << std::endl;
+    std::cout << "  Keyframe delta deg: " << offline_config_.keyframe_delta_deg << " deg" << std::endl;
+    std::cout << "  Output dir: " << offline_config_.output_dir << std::endl;
+    std::cout << "  Save keyframes: " << (offline_config_.save_keyframes ? "yes" : "no") << std::endl;
+    std::cout << "  Save global map: " << (offline_config_.save_global_map ? "yes" : "no") << std::endl;
 }
 
 void OfflineLIVMapper::initComponents() {
@@ -445,6 +481,12 @@ void OfflineLIVMapper::extractKeyFrame() {
     // Copy body frame point cloud
     kf.body_cloud.reset(new PointCloudXYZI(*feats_down_body_));
     
+    // Immediately save keyframe cloud if incremental saving is enabled
+    if (incremental_save_enabled_) {
+        std::string filename = incremental_output_dir_ + "/keyframes/" + std::to_string(kf.id) + ".pcd";
+        pcl::io::savePCDFileBinary(filename, *kf.body_cloud);
+    }
+    
     keyframes_.push_back(kf);
     last_kf_pos_ = state_.pos_end;
     last_kf_rot_ = state_.rot_end;
@@ -466,6 +508,47 @@ void OfflineLIVMapper::storePose() {
 void OfflineLIVMapper::setKeyframeThresholds(double trans_m, double rot_deg) {
     offline_config_.keyframe_delta_trans = trans_m;
     offline_config_.keyframe_delta_deg = rot_deg;
+}
+
+void OfflineLIVMapper::setOutputDirectory(const std::string& dir) {
+    incremental_output_dir_ = dir;
+    incremental_save_enabled_ = !dir.empty();
+    
+    if (incremental_save_enabled_) {
+        // Ensure keyframes directory exists
+        namespace fs = std::filesystem;
+        fs::create_directories(dir + "/keyframes");
+        std::cout << "[OfflineLIVMapper] Incremental saving enabled to: " << dir << std::endl;
+    }
+}
+
+void OfflineLIVMapper::shutdown() {
+    // Clear keyframes to release point cloud memory
+    keyframes_.clear();
+    trajectory_.clear();
+    
+    // Clear VoxelMapManager's voxel map (it owns the VoxelOctoTree pointers)
+    if (voxelmap_manager_) {
+        for (auto& pair : voxelmap_manager_->voxel_map_) {
+            if (pair.second) {
+                delete pair.second;
+                pair.second = nullptr;
+            }
+        }
+        voxelmap_manager_->voxel_map_.clear();
+        voxelmap_manager_.reset();
+    }
+    
+    // Clear point clouds
+    if (feats_undistort_) feats_undistort_->clear();
+    if (feats_down_body_) feats_down_body_->clear();
+    if (feats_down_world_) feats_down_world_->clear();
+    
+    // Clear IMU processor
+    p_imu_.reset();
+    p_pre_.reset();
+    
+    std::cout << "[OfflineLIVMapper] Shutdown complete" << std::endl;
 }
 
 void OfflineLIVMapper::savePosesTUM(const std::string& path) const {

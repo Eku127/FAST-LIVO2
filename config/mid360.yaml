@@ -34,7 +34,7 @@
       dept_err: 0.02
       beam_err: 0.05
       min_eigen_value: 0.0025 # 0.005
-      voxel_size: 0.15
+      voxel_size: 0.1
       max_layer: 2
       max_points_num: 50
       layer_init_num: [5, 5, 5, 5, 5]
@@ -62,7 +62,15 @@
       pcd_save_en: true
       type: 0 # 0: World Frame, 1: Body Frame;
       colmap_output_en: false # need to set interval = -1
-      filter_size_pcd: 0.15
+      filter_size_pcd: 0.1
       interval: 10
       # how many LiDAR frames saved in each pcd file;
       # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+    offline:
+      keyframe_delta_trans: 1.0  # meters, translation threshold for keyframe extraction
+      keyframe_delta_deg: 10.0   # degrees, rotation threshold for keyframe extraction
+      output_dir: "./output"     # output directory for results
+      save_keyframes: true       # whether to save keyframe point clouds
+      save_global_map: true      # whether to save merged global map
+      global_map_resolution: 0.1 # voxel resolution for global map downsampling

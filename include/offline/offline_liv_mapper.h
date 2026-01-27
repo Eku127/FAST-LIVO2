@@ -55,6 +55,7 @@ struct OfflineConfig {
     std::string output_dir = "./output";
     bool save_keyframes = true;
     bool save_global_map = true;
+    double global_map_resolution = 0.1;  // voxel resolution for global map
 };
 
 /**
@@ -197,6 +198,23 @@ public:
      * @brief Set keyframe thresholds
      */
     void setKeyframeThresholds(double trans_m, double rot_deg);
+    
+    /**
+     * @brief Set output directory for incremental saving
+     * @param dir Output directory path
+     * 
+     * When set, keyframe point clouds will be saved immediately
+     * as they are extracted, rather than at program end.
+     */
+    void setOutputDirectory(const std::string& dir);
+    
+    /**
+     * @brief Explicitly release resources before destruction
+     * 
+     * Call this before the object goes out of scope to ensure
+     * proper cleanup order of internal resources.
+     */
+    void shutdown();
 
 private:
     // Configuration
@@ -255,6 +273,10 @@ private:
     
     // Trajectory storage
     std::vector<TimedPose> trajectory_;
+    
+    // Incremental saving
+    std::string incremental_output_dir_;
+    bool incremental_save_enabled_ = false;
     
     // === Internal methods ===
     

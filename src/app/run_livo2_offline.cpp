@@ -20,10 +20,66 @@ using namespace livo2_offline;
 
 // Global flag for graceful shutdown
 static bool g_shutdown = false;
+static OfflineLIVMapper* g_mapper = nullptr;
+static std::string g_output_dir;
 
 void signalHandler(int signum) {
     std::cout << "\n[Main] Interrupt signal (" << signum << ") received." << std::endl;
     g_shutdown = true;
+    
+    // Save intermediate results on interrupt
+    if (g_mapper && !g_output_dir.empty()) {
+        std::cout << "[Main] Saving intermediate results before exit..." << std::endl;
+        g_mapper->savePosesTUM(g_output_dir + "/poses.txt");
+        g_mapper->saveKeyframePoses(g_output_dir + "/keyframes.txt");
+        // Note: keyframe clouds are saved incrementally, no need to save here
+        std::cout << "[Main] Intermediate results saved." << std::endl;
+    }
+}
+
+/**
+ * @brief Check if output directory is non-empty and prompt for overwrite
+ * @return true if safe to proceed, false if user wants to abort
+ */
+bool checkOutputDirectory(const std::string& output_dir) {
+    namespace fs = std::filesystem;
+    
+    if (!fs::exists(output_dir)) {
+        return true;  // Directory doesn't exist, safe to create
+    }
+    
+    // Check for specific output files
+    std::vector<std::string> existing_files;
+    
+    if (fs::exists(output_dir + "/poses.txt")) {
+        existing_files.push_back("poses.txt");
+    }
+    if (fs::exists(output_dir + "/keyframes.txt")) {
+        existing_files.push_back("keyframes.txt");
+    }
+    if (fs::exists(output_dir + "/map.pcd")) {
+        existing_files.push_back("map.pcd");
+    }
+    if (fs::exists(output_dir + "/keyframes") && !fs::is_empty(output_dir + "/keyframes")) {
+        existing_files.push_back("keyframes/");
+    }
+    
+    if (existing_files.empty()) {
+        return true;  // No conflicting output files
+    }
+    
+    std::cout << "\n[Warning] Output directory already contains results: " << output_dir << std::endl;
+    std::cout << "Existing files:" << std::endl;
+    for (const auto& f : existing_files) {
+        std::cout << "  - " << f << std::endl;
+    }
+    
+    std::cout << "\nOverwrite? [y/N]: ";
+    
+    std::string choice;
+    std::getline(std::cin, choice);
+    
+    return (!choice.empty() && (choice[0] == 'y' || choice[0] == 'Y'));
 }
 
 void printUsage(const char* program) {
@@ -54,6 +110,9 @@ int main(int argc, char** argv) {
     std::string config_path = argv[2];
     std::string output_dir = (argc > 3) ? argv[3] : "./output";
     
+    // Store output_dir globally for signal handler
+    g_output_dir = output_dir;
+    
     // Validate paths
     namespace fs = std::filesystem;
     
@@ -65,6 +124,12 @@ int main(int argc, char** argv) {
     if (!fs::exists(config_path)) {
         std::cerr << "[Main] Config file not found: " << config_path << std::endl;
         return 1;
+    }
+    
+    // Check output directory before proceeding
+    if (!checkOutputDirectory(output_dir)) {
+        std::cout << "[Main] Aborted by user." << std::endl;
+        return 0;
     }
     
     // Create output directories
@@ -81,6 +146,12 @@ int main(int argc, char** argv) {
     
     // Initialize mapper
     OfflineLIVMapper mapper(config_path);
+    
+    // Set output directory for incremental saving
+    mapper.setOutputDirectory(output_dir);
+    
+    // Store mapper pointer globally for signal handler
+    g_mapper = &mapper;
     
     // Get topic names from config
     std::string imu_topic = mapper.config().imu_topic;
@@ -178,8 +249,8 @@ int main(int argc, char** argv) {
               << "Trajectory: " << mapper.trajectory().size() << " poses\n"
               << "================================================\n" << std::endl;
     
-    // Save results
-    std::cout << "[Main] Saving results..." << std::endl;
+    // Save final results
+    std::cout << "[Main] Saving final results..." << std::endl;
     
     // Save full trajectory (TUM format)
     mapper.savePosesTUM(output_dir + "/poses.txt");
@@ -187,17 +258,21 @@ int main(int argc, char** argv) {
     // Save keyframe poses
     mapper.saveKeyframePoses(output_dir + "/keyframes.txt");
     
-    // Save keyframe point clouds
-    mapper.saveKeyframeClouds(output_dir + "/keyframes");
-    
-    // Save global map
+    // Note: keyframe point clouds are saved incrementally during processing
+    // Only save global map at the end (requires all keyframes)
     mapper.saveGlobalMap(output_dir + "/map.pcd", 0.1);
     
     std::cout << "\n[Main] All results saved to: " << output_dir << std::endl;
     std::cout << "  - poses.txt       : Full trajectory (TUM format)\n"
               << "  - keyframes.txt   : Keyframe poses\n"
-              << "  - keyframes/      : Keyframe point clouds (PCD)\n"
+              << "  - keyframes/      : Keyframe point clouds (saved incrementally)\n"
               << "  - map.pcd         : Global map\n" << std::endl;
+    
+    // Clear global mapper pointer before exit
+    g_mapper = nullptr;
+    
+    // Explicitly shutdown mapper to cleanup resources before destructor
+    mapper.shutdown();
     
     std::cout << "[Main] Done!" << std::endl;
     

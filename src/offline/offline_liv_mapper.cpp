@@ -27,25 +27,12 @@ OfflineLIVMapper::OfflineLIVMapper(const OfflineConfig& config, const std::strin
 }
 
 OfflineLIVMapper::~OfflineLIVMapper() {
-    // Note: voxel_map_ is always empty because VoxelMapManager uses its own copy.
-    // The actual cleanup is done in shutdown() which clears voxelmap_manager_->voxel_map_.
-    // This loop is kept for safety in case the design changes.
-    for (auto& pair : voxel_map_) {
-        if (pair.second) {
-            delete pair.second;
-            pair.second = nullptr;
-        }
-    }
+    // Note: With smart pointers (shared_ptr), memory is automatically released.
+    // No manual cleanup needed - shared_ptr handles reference counting and deletion.
+    // Simply clearing the maps will decrease reference counts and free memory when appropriate.
     voxel_map_.clear();
     
-    // If shutdown() wasn't called, clean up VoxelMapManager's voxel map here
     if (voxelmap_manager_) {
-        for (auto& pair : voxelmap_manager_->voxel_map_) {
-            if (pair.second) {
-                delete pair.second;
-                pair.second = nullptr;
-            }
-        }
         voxelmap_manager_->voxel_map_.clear();
     }
 }
@@ -80,6 +67,34 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
             filter_size_surf_min_ = preprocess["filter_size_surf"].as<double>();
             offline_config_.filter_size_surf = filter_size_surf_min_;
         }
+        // CRITICAL: Preprocess parameters for point cloud preprocessing
+        if (preprocess["blind"]) preprocess_blind_ = preprocess["blind"].as<double>();
+        if (preprocess["lidar_type"]) preprocess_lidar_type_ = preprocess["lidar_type"].as<int>();
+        if (preprocess["scan_line"]) preprocess_scan_line_ = preprocess["scan_line"].as<int>();
+        if (preprocess["point_filter_num"]) preprocess_point_filter_num_ = preprocess["point_filter_num"].as<int>();
+    }
+    
+    // LIO / VoxelMap settings - read from yaml instead of hardcoding
+    if (params["lio"]) {
+        auto lio = params["lio"];
+        if (lio["max_iterations"]) voxel_max_iterations_ = lio["max_iterations"].as<int>();
+        if (lio["voxel_size"]) voxel_size_ = lio["voxel_size"].as<double>();
+        if (lio["max_layer"]) voxel_max_layer_ = lio["max_layer"].as<int>();
+        if (lio["max_points_num"]) voxel_max_points_num_ = lio["max_points_num"].as<int>();
+        if (lio["min_eigen_value"]) voxel_planner_threshold_ = lio["min_eigen_value"].as<double>();
+        if (lio["beam_err"]) voxel_beam_err_ = lio["beam_err"].as<double>();
+        if (lio["dept_err"]) voxel_dept_err_ = lio["dept_err"].as<double>();
+        if (lio["layer_init_num"]) {
+            voxel_layer_init_num_ = lio["layer_init_num"].as<std::vector<int>>();
+        }
+    }
+    
+    // Local map settings
+    if (params["local_map"]) {
+        auto local_map = params["local_map"];
+        if (local_map["map_sliding_en"]) map_sliding_en_ = local_map["map_sliding_en"].as<bool>();
+        if (local_map["half_map_size"]) half_map_size_ = local_map["half_map_size"].as<int>();
+        if (local_map["sliding_thresh"]) sliding_thresh_ = local_map["sliding_thresh"].as<double>();
     }
     
     // IMU settings
@@ -89,6 +104,11 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
         if (imu["imu_int_frame"]) imu_int_frame_ = imu["imu_int_frame"].as<int>();
         if (imu["gravity_est_en"]) gravity_est_en_ = imu["gravity_est_en"].as<bool>();
         if (imu["ba_bg_est_en"]) ba_bg_est_en_ = imu["ba_bg_est_en"].as<bool>();
+        // IMU noise covariances - CRITICAL for IMU integration accuracy
+        if (imu["acc_cov"]) acc_cov_ = imu["acc_cov"].as<double>();
+        if (imu["gyr_cov"]) gyr_cov_ = imu["gyr_cov"].as<double>();
+        if (imu["b_acc_cov"]) b_acc_cov_ = imu["b_acc_cov"].as<double>();
+        if (imu["b_gyr_cov"]) b_gyr_cov_ = imu["b_gyr_cov"].as<double>();
     }
     
     // Publish settings
@@ -138,6 +158,14 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
     std::cout << "  LiDAR topic: " << offline_config_.lidar_topic << std::endl;
     std::cout << "  IMU topic: " << offline_config_.imu_topic << std::endl;
     std::cout << "  IMU enabled: " << (imu_en_ ? "yes" : "no") << std::endl;
+    std::cout << "  IMU covariances - acc: " << acc_cov_ << ", gyr: " << gyr_cov_ 
+              << ", b_acc: " << b_acc_cov_ << ", b_gyr: " << b_gyr_cov_ << std::endl;
+    std::cout << "  Preprocess - blind: " << preprocess_blind_ << ", lidar_type: " << preprocess_lidar_type_
+              << ", scan_line: " << preprocess_scan_line_ << ", point_filter: " << preprocess_point_filter_num_ << std::endl;
+    std::cout << "  VoxelMap - voxel_size: " << voxel_size_ << ", max_layer: " << voxel_max_layer_ 
+              << ", max_iter: " << voxel_max_iterations_ << std::endl;
+    std::cout << "  LocalMap - sliding_en: " << (map_sliding_en_ ? "yes" : "no") 
+              << ", half_size: " << half_map_size_ << std::endl;
     std::cout << "  Keyframe delta trans: " << offline_config_.keyframe_delta_trans << " m" << std::endl;
     std::cout << "  Keyframe delta deg: " << offline_config_.keyframe_delta_deg << " deg" << std::endl;
     std::cout << "  Output dir: " << offline_config_.output_dir << std::endl;
@@ -151,33 +179,43 @@ void OfflineLIVMapper::initComponents() {
     feats_down_body_.reset(new PointCloudXYZI());
     feats_down_world_.reset(new PointCloudXYZI());
     
-    // Initialize preprocessor
+    // Initialize preprocessor with parameters from yaml (same as online mode)
     p_pre_.reset(new Preprocess());
+    p_pre_->blind = preprocess_blind_;
+    p_pre_->blind_sqr = preprocess_blind_ * preprocess_blind_;
+    p_pre_->lidar_type = preprocess_lidar_type_;
+    p_pre_->N_SCANS = preprocess_scan_line_;
+    p_pre_->point_filter_num = preprocess_point_filter_num_;
     
-    // Initialize IMU processor
+    // Initialize IMU processor with parameters from yaml (CRITICAL - same as online mode)
     p_imu_.reset(new ImuProcess());
     p_imu_->set_extrinsic(ext_t_, ext_r_);
     p_imu_->set_imu_init_frame_num(imu_int_frame_);
+    // CRITICAL: Set IMU noise covariances - this was missing before!
+    p_imu_->set_gyr_cov_scale(Eigen::Vector3d(gyr_cov_, gyr_cov_, gyr_cov_));
+    p_imu_->set_acc_cov_scale(Eigen::Vector3d(acc_cov_, acc_cov_, acc_cov_));
+    p_imu_->set_gyr_bias_cov(Eigen::Vector3d(b_gyr_cov_, b_gyr_cov_, b_gyr_cov_));
+    p_imu_->set_acc_bias_cov(Eigen::Vector3d(b_acc_cov_, b_acc_cov_, b_acc_cov_));
     
     if (!imu_en_) p_imu_->disable_imu();
     if (!gravity_est_en_) p_imu_->disable_gravity_est();
     if (!ba_bg_est_en_) p_imu_->disable_bias_est();
     
-    // Initialize voxel map manager with default config
+    // Initialize voxel map manager with parameters from yaml (same as online mode)
     VoxelMapConfig voxel_config;
-    voxel_config.max_iterations_ = 5;
-    voxel_config.max_voxel_size_ = 0.15;
-    voxel_config.max_layer_ = 2;
-    voxel_config.max_points_num_ = 50;
-    voxel_config.planner_threshold_ = 0.01;
-    voxel_config.beam_err_ = 0.05;
-    voxel_config.dept_err_ = 0.02;
+    voxel_config.max_iterations_ = voxel_max_iterations_;
+    voxel_config.max_voxel_size_ = voxel_size_;
+    voxel_config.max_layer_ = voxel_max_layer_;
+    voxel_config.max_points_num_ = voxel_max_points_num_;
+    voxel_config.planner_threshold_ = voxel_planner_threshold_;
+    voxel_config.beam_err_ = voxel_beam_err_;
+    voxel_config.dept_err_ = voxel_dept_err_;
     voxel_config.sigma_num_ = 3.0;
     voxel_config.is_pub_plane_map_ = false;
-    voxel_config.map_sliding_en = false;
-    voxel_config.sliding_thresh = 8.0;
-    voxel_config.half_map_size = 100;
-    voxel_config.layer_init_num_ = {5, 5, 5, 5, 5};
+    voxel_config.map_sliding_en = map_sliding_en_;
+    voxel_config.sliding_thresh = sliding_thresh_;
+    voxel_config.half_map_size = half_map_size_;
+    voxel_config.layer_init_num_ = voxel_layer_init_num_;
     voxelmap_manager_.reset(new VoxelMapManager(voxel_config, voxel_map_));
     voxelmap_manager_->extT_ = ext_t_;
     voxelmap_manager_->extR_ = ext_r_;
@@ -527,14 +565,8 @@ void OfflineLIVMapper::shutdown() {
     keyframes_.clear();
     trajectory_.clear();
     
-    // Clear VoxelMapManager's voxel map (it owns the VoxelOctoTree pointers)
+    // Clear VoxelMapManager's voxel map (shared_ptr handles cleanup automatically)
     if (voxelmap_manager_) {
-        for (auto& pair : voxelmap_manager_->voxel_map_) {
-            if (pair.second) {
-                delete pair.second;
-                pair.second = nullptr;
-            }
-        }
         voxelmap_manager_->voxel_map_.clear();
         voxelmap_manager_.reset();
     }

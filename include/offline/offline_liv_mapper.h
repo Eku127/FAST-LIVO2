@@ -224,7 +224,7 @@ private:
     PreprocessPtr p_pre_;
     ImuProcessPtr p_imu_;
     VoxelMapManagerPtr voxelmap_manager_;
-    std::unordered_map<VOXEL_LOCATION, VoxelOctoTree*> voxel_map_;
+    std::unordered_map<VOXEL_LOCATION, std::shared_ptr<VoxelOctoTree>> voxel_map_;
     
     // State
     StatesGroup state_;
@@ -265,6 +265,32 @@ private:
     bool gravity_est_en_ = true;
     bool ba_bg_est_en_ = true;
     int imu_int_frame_ = 3;
+    // IMU noise covariances (CRITICAL for matching online mode)
+    double acc_cov_ = 0.1;
+    double gyr_cov_ = 0.1;
+    double b_acc_cov_ = 0.0001;
+    double b_gyr_cov_ = 0.0001;
+    
+    // Preprocess settings (CRITICAL for matching online mode)
+    double preprocess_blind_ = 0.5;
+    int preprocess_lidar_type_ = 1;  // Default: Livox
+    int preprocess_scan_line_ = 4;
+    int preprocess_point_filter_num_ = 1;
+    
+    // VoxelMap settings (CRITICAL for matching online mode)
+    int voxel_max_iterations_ = 5;
+    double voxel_size_ = 0.15;
+    int voxel_max_layer_ = 2;
+    int voxel_max_points_num_ = 50;
+    double voxel_planner_threshold_ = 0.01;
+    double voxel_beam_err_ = 0.05;
+    double voxel_dept_err_ = 0.02;
+    std::vector<int> voxel_layer_init_num_ = {5, 5, 5, 5, 5};
+    
+    // Local map settings
+    bool map_sliding_en_ = false;
+    int half_map_size_ = 100;
+    double sliding_thresh_ = 8.0;
     
     // Keyframe management
     std::vector<KeyFrame> keyframes_;

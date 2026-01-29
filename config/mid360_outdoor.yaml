@@ -28,13 +28,15 @@
       gyr_cov: 0.3 # 0.5
       b_acc_cov: 0.0001 # 0.1
       b_gyr_cov: 0.0001 # 0.1
+      gravity_est_en: true   # enable gravity estimation
+      ba_bg_est_en: true     # enable bias estimation
 
     lio:
       max_iterations: 5
       dept_err: 0.02
       beam_err: 0.05
-      min_eigen_value: 0.01
-      voxel_size: 0.15
+      min_eigen_value: 0.005
+      voxel_size: 0.30
       max_layer: 2
       max_points_num: 50
       layer_init_num: [5, 5, 5, 5, 5]
@@ -59,7 +61,7 @@
       pose_output_en: false
 
     pcd_save:
-      pcd_save_en: true
+      pcd_save_en: false
       type: 0 # 0: World Frame, 1: Body Frame;
       colmap_output_en: false # need to set interval = -1
       filter_size_pcd: 0.1

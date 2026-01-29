@@ -69,6 +69,12 @@ void loadVoxelConfig(rclcpp::Node* node, VoxelMapConfig &voxel_config)
   node->get_parameter("local_map.map_sliding_en", voxel_config.map_sliding_en);
   node->get_parameter("local_map.half_map_size", voxel_config.half_map_size);
   node->get_parameter("local_map.sliding_thresh", voxel_config.sliding_thresh);
+
+
+  std::cout << "VoxelMapConfig: " << std::endl;
+  std::cout << "  max_voxel_size_: " << voxel_config.max_voxel_size_ << std::endl;
+  std::cout << "  map_sliding_en_: " << voxel_config.map_sliding_en << std::endl;
+  std::cout << "  half_map_size_: " << voxel_config.half_map_size << std::endl;
 }
 
 void VoxelOctoTree::init_plane(const std::vector<pointWithVar> &points, VoxelPlane *plane)
@@ -157,7 +163,7 @@ void VoxelOctoTree::init_octo_tree()
 {
   if (static_cast<int>(temp_points_.size()) > points_size_threshold_)
   {
-    init_plane(temp_points_, plane_ptr_);
+    init_plane(temp_points_, plane_ptr_.get());
     if (plane_ptr_->is_plane_ == true)
     {
       octo_state_ = 0;
@@ -195,7 +201,7 @@ void VoxelOctoTree::cut_octo_tree()
     int leafnum = 4 * xyz[0] + 2 * xyz[1] + xyz[2];
     if (leaves_[leafnum] == nullptr)
     {
-      leaves_[leafnum] = new VoxelOctoTree(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
+      leaves_[leafnum] = std::make_unique<VoxelOctoTree>(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
       leaves_[leafnum]->layer_init_num_ = layer_init_num_;
       leaves_[leafnum]->voxel_center_[0] = voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
       leaves_[leafnum]->voxel_center_[1] = voxel_center_[1] + (2 * xyz[1] - 1) * quater_length_;
@@ -211,7 +217,7 @@ void VoxelOctoTree::cut_octo_tree()
     {
       if (static_cast<int>(leaves_[i]->temp_points_.size()) > leaves_[i]->points_size_threshold_)
       {
-        init_plane(leaves_[i]->temp_points_, leaves_[i]->plane_ptr_);
+        init_plane(leaves_[i]->temp_points_, leaves_[i]->plane_ptr_.get());
         if (leaves_[i]->plane_ptr_->is_plane_)
         {
           leaves_[i]->octo_state_ = 0;
@@ -253,7 +259,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
         temp_points_.push_back(pv);
         if (new_points_ > update_size_threshold_)
         {
-          init_plane(temp_points_, plane_ptr_);
+          init_plane(temp_points_, plane_ptr_.get());
           new_points_ = 0;
         }
         if (static_cast<int>(temp_points_.size()) >= max_points_num_)
@@ -276,7 +282,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
         if (leaves_[leafnum] != nullptr) { leaves_[leafnum]->UpdateOctoTree(pv); }
         else
         {
-          leaves_[leafnum] = new VoxelOctoTree(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
+          leaves_[leafnum] = std::make_unique<VoxelOctoTree>(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
           leaves_[leafnum]->layer_init_num_ = layer_init_num_;
           leaves_[leafnum]->voxel_center_[0] = voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
           leaves_[leafnum]->voxel_center_[1] = voxel_center_[1] + (2 * xyz[1] - 1) * quater_length_;
@@ -293,7 +299,7 @@ void VoxelOctoTree::UpdateOctoTree(const pointWithVar &pv)
           temp_points_.push_back(pv);
           if (new_points_ > update_size_threshold_)
           {
-            init_plane(temp_points_, plane_ptr_);
+            init_plane(temp_points_, plane_ptr_.get());
             new_points_ = 0;
           }
           if (static_cast<int>(temp_points_.size()) > max_points_num_)
@@ -342,7 +348,7 @@ VoxelOctoTree *VoxelOctoTree::Insert(const pointWithVar &pv)
     if (leaves_[leafnum] != nullptr) { return leaves_[leafnum]->Insert(pv); }
     else
     {
-      leaves_[leafnum] = new VoxelOctoTree(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
+      leaves_[leafnum] = std::make_unique<VoxelOctoTree>(max_layer_, layer_ + 1, layer_init_num_[layer_ + 1], max_points_num_, planer_threshold_);
       leaves_[leafnum]->layer_init_num_ = layer_init_num_;
       leaves_[leafnum]->voxel_center_[0] = voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
       leaves_[leafnum]->voxel_center_[1] = voxel_center_[1] + (2 * xyz[1] - 1) * quater_length_;
@@ -608,7 +614,7 @@ void VoxelMapManager::BuildVoxelMap()
     }
     else
     {
-      VoxelOctoTree *octo_tree = new VoxelOctoTree(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
+      auto octo_tree = std::make_shared<VoxelOctoTree>(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
       voxel_map_[position] = octo_tree;
       voxel_map_[position]->quater_length_ = voxel_size / 4;
       voxel_map_[position]->voxel_center_[0] = (0.5 + position.x) * voxel_size;
@@ -663,7 +669,7 @@ void VoxelMapManager::UpdateVoxelMap(const std::vector<pointWithVar> &input_poin
     if (iter != voxel_map_.end()) { voxel_map_[position]->UpdateOctoTree(p_v); }
     else
     {
-      VoxelOctoTree *octo_tree = new VoxelOctoTree(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
+      auto octo_tree = std::make_shared<VoxelOctoTree>(max_layer, 0, layer_init_num[0], max_points_num, planer_threshold);
       voxel_map_[position] = octo_tree;
       voxel_map_[position]->layer_init_num_ = layer_init_num;
       voxel_map_[position]->quater_length_ = voxel_size / 4;
@@ -707,7 +713,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
     auto iter = voxel_map_.find(position);
     if (iter != voxel_map_.end())
     {
-      VoxelOctoTree *current_octo = iter->second;
+      VoxelOctoTree *current_octo = iter->second.get();
       PointToPlane single_ptpl;
       bool is_sucess = false;
       double prob = 0;
@@ -722,7 +728,7 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
         if (loc_xyz[2] > (current_octo->voxel_center_[2] + current_octo->quater_length_)) { near_position.z = near_position.z + 1; }
         else if (loc_xyz[2] < (current_octo->voxel_center_[2] - current_octo->quater_length_)) { near_position.z = near_position.z - 1; }
         auto iter_near = voxel_map_.find(near_position);
-        if (iter_near != voxel_map_.end()) { build_single_residual(pv, iter_near->second, 0, is_sucess, prob, single_ptpl); }
+        if (iter_near != voxel_map_.end()) { build_single_residual(pv, iter_near->second.get(), 0, is_sucess, prob, single_ptpl); }
       }
       if (is_sucess)
       {
@@ -810,7 +816,7 @@ void VoxelMapManager::build_single_residual(pointWithVar &pv, const VoxelOctoTre
         if (current_octo->leaves_[leafnum] != nullptr)
         {
 
-          VoxelOctoTree *leaf_octo = current_octo->leaves_[leafnum];
+          VoxelOctoTree *leaf_octo = current_octo->leaves_[leafnum].get();
           build_single_residual(pv, leaf_octo, current_layer + 1, is_sucess, prob, single_ptpl);
         }
       }
@@ -831,7 +837,7 @@ void VoxelMapManager::pubVoxelMap()
   std::vector<VoxelPlane> pub_plane_list;
   for (auto iter = voxel_map_.begin(); iter != voxel_map_.end(); iter++)
   {
-    GetUpdatePlane(iter->second, config_setting_.max_layer_, pub_plane_list);
+    GetUpdatePlane(iter->second.get(), config_setting_.max_layer_, pub_plane_list);
   }
   for (size_t i = 0; i < pub_plane_list.size(); i++)
   {
@@ -862,7 +868,7 @@ void VoxelMapManager::GetUpdatePlane(const VoxelOctoTree *current_octo, const in
     {
       for (size_t i = 0; i < 8; i++)
       {
-        if (current_octo->leaves_[i] != nullptr) { GetUpdatePlane(current_octo->leaves_[i], pub_max_voxel_layer, plane_list); }
+        if (current_octo->leaves_[i] != nullptr) { GetUpdatePlane(current_octo->leaves_[i].get(), pub_max_voxel_layer, plane_list); }
       }
     }
   }
@@ -994,7 +1000,7 @@ void VoxelMapManager::clearMemOutOfMap(const int& x_max,const int& x_min,const i
     bool should_remove = loc.x > x_max || loc.x < x_min || loc.y > y_max || loc.y < y_min || loc.z > z_max || loc.z < z_min;
     if (should_remove){
       // last_delete_time = omp_get_wtime();
-      delete it->second;
+      // shared_ptr automatically releases memory when erased
       it = voxel_map_.erase(it);
       // delete_time += omp_get_wtime() - last_delete_time;
       delete_voxel_cout++;

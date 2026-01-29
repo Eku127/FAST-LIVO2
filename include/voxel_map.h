@@ -16,8 +16,11 @@ which is included as part of this source code package.
 #include "common_lib.h"
 #include <Eigen/Dense>
 #include <fstream>
-#include <math.h>
+#include <cmath>
+#include <memory>
+#include <array>
 #include <mutex>
+#include <atomic>
 #include <omp.h>
 #include <pcl/common/io.h>
 #include <rclcpp/rclcpp.hpp>
@@ -27,12 +30,15 @@ which is included as part of this source code package.
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
-#define VOXELMAP_HASH_P 116101
-#define VOXELMAP_MAX_N 10000000000
+// Modern C++ constexpr constants instead of #define macros
+constexpr int64_t VOXELMAP_HASH_P = 116101;
+constexpr int64_t VOXELMAP_MAX_N = 10000000000;
 
-static int voxel_plane_id = 0;
+// C++17 inline variable: single instance shared across all translation units
+// Use atomic for thread safety since voxel map operations may be parallelized
+inline std::atomic<int> voxel_plane_id{0};
 
-typedef struct VoxelMapConfig
+struct VoxelMapConfig
 {
   double max_voxel_size_;
   int max_layer_;
@@ -49,9 +55,9 @@ typedef struct VoxelMapConfig
   double sliding_thresh;
   bool map_sliding_en;
   int half_map_size;
-} VoxelMapConfig;
+};
 
-typedef struct PointToPlane
+struct PointToPlane
 {
   Eigen::Vector3d point_b_;
   Eigen::Vector3d point_w_;
@@ -64,9 +70,9 @@ typedef struct PointToPlane
   double eigen_value_;
   bool is_valid_;
   float dis_to_plane_;
-} PointToPlane;
+};
 
-typedef struct VoxelPlane
+struct VoxelPlane
 {
   Eigen::Vector3d center_;
   Eigen::Vector3d normal_;
@@ -91,7 +97,7 @@ typedef struct VoxelPlane
     center_ = Eigen::Vector3d::Zero();
     normal_ = Eigen::Vector3d::Zero();
   }
-} VoxelPlane;
+};
 
 class VOXEL_LOCATION
 {
@@ -119,7 +125,7 @@ template <> struct hash<VOXEL_LOCATION>
 
 struct DS_POINT
 {
-  float xyz[3];
+  std::array<float, 3> xyz;
   float intensity;
   int count = 0;
 };
@@ -129,14 +135,16 @@ void calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_
 class VoxelOctoTree
 {
 
-public:
-  VoxelOctoTree() = default;
+public:  
   std::vector<pointWithVar> temp_points_;
-  VoxelPlane *plane_ptr_;
+  std::unique_ptr<VoxelPlane> plane_ptr_;
   int layer_;
   int octo_state_; // 0 is end of tree, 1 is not
-  VoxelOctoTree *leaves_[8];
-  double voxel_center_[3]; // x, y, z
+  int new_points_;
+  bool init_octo_;
+  bool update_enable_;
+  std::array<std::unique_ptr<VoxelOctoTree>, 8> leaves_;
+  std::array<double, 3> voxel_center_{}; // x, y, z
   std::vector<int> layer_init_num_;
   float quater_length_;
   float planer_threshold_;
@@ -144,35 +152,30 @@ public:
   int update_size_threshold_;
   int max_points_num_;
   int max_layer_;
-  int new_points_;
-  bool init_octo_;
-  bool update_enable_;
+
+  // Default constructor initializes plane_ptr_ to nullptr (符合原有算法逻辑)
+  VoxelOctoTree() : plane_ptr_(nullptr), layer_(0), octo_state_(0), new_points_(0),
+                    init_octo_(false), update_enable_(true), leaves_{} {}
 
   VoxelOctoTree(int max_layer, int layer, int points_size_threshold, int max_points_num, float planer_threshold)
-      : layer_(layer), planer_threshold_(planer_threshold), points_size_threshold_(points_size_threshold), max_points_num_(max_points_num),
-        max_layer_(max_layer)
+      : plane_ptr_(std::make_unique<VoxelPlane>()), layer_(layer), octo_state_(0), new_points_(0),
+        init_octo_(false), update_enable_(true), leaves_{},
+        planer_threshold_(planer_threshold), points_size_threshold_(points_size_threshold),
+        update_size_threshold_(5), max_points_num_(max_points_num), max_layer_(max_layer)
   {
     temp_points_.clear();
-    octo_state_ = 0;
-    new_points_ = 0;
-    update_size_threshold_ = 5;
-    init_octo_ = false;
-    update_enable_ = true;
-    for (int i = 0; i < 8; i++)
-    {
-      leaves_[i] = nullptr;
-    }
-    plane_ptr_ = new VoxelPlane;
   }
 
-  ~VoxelOctoTree()
-  {
-    for (int i = 0; i < 8; i++)
-    {
-      delete leaves_[i];
-    }
-    delete plane_ptr_;
-  }
+  // Destructor: unique_ptr handles cleanup automatically
+  ~VoxelOctoTree() = default;
+  
+  // Disable copy (unique_ptr is not copyable)
+  VoxelOctoTree(const VoxelOctoTree&) = delete;
+  VoxelOctoTree& operator=(const VoxelOctoTree&) = delete;
+  
+  // Enable move
+  VoxelOctoTree(VoxelOctoTree&&) = default;
+  VoxelOctoTree& operator=(VoxelOctoTree&&) = default;
   void init_plane(const std::vector<pointWithVar> &points, VoxelPlane *plane);
   void init_octo_tree();
   void cut_octo_tree();
@@ -191,7 +194,7 @@ public:
   VoxelMapConfig config_setting_;
   int current_frame_id_ = 0;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr voxel_map_pub_;
-  std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map_;
+  std::unordered_map<VOXEL_LOCATION, std::shared_ptr<VoxelOctoTree>> voxel_map_;
 
   PointCloudXYZI::Ptr feats_undistort_;
   PointCloudXYZI::Ptr feats_down_body_;
@@ -217,7 +220,7 @@ public:
   std::vector<pointWithVar> pv_list_;
   std::vector<PointToPlane> ptpl_list_;
 
-  VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &voxel_map)
+  VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, std::shared_ptr<VoxelOctoTree>> &voxel_map)
       : config_setting_(config_setting), voxel_map_(voxel_map)
   {
     current_frame_id_ = 0;
@@ -254,6 +257,7 @@ private:
 
   void mapJet(double v, double vmin, double vmax, uint8_t &r, uint8_t &g, uint8_t &b);
 };
-typedef std::shared_ptr<VoxelMapManager> VoxelMapManagerPtr;
+
+using VoxelMapManagerPtr = std::shared_ptr<VoxelMapManager>;
 
 #endif // VOXEL_MAP_H_

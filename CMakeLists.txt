@@ -111,6 +111,9 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
+# Backend PGO (required when building offline module)
+find_package(GTSAM QUIET)
+
 # Offline processing dependencies
 find_package(rosbag2_cpp QUIET)
 find_package(yaml-cpp QUIET)
@@ -120,6 +123,7 @@ include_directories(
   include
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/small_gicp/include
 )
 
 # Add libraries
@@ -145,6 +149,9 @@ target_include_directories(lio PUBLIC
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
 )
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(lio ${OpenMP_CXX_LIBRARIES})
+endif()
 
 add_library(pre src/preprocess.cpp)
 ament_target_dependencies(pre
@@ -161,6 +168,9 @@ target_include_directories(pre PUBLIC
   ${PCL_INCLUDE_DIRS}
 )
 ament_target_dependencies(pre livox_ros_driver2)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(pre ${OpenMP_CXX_LIBRARIES})
+endif()
 
 add_library(imu_proc src/IMU_Processing.cpp)
 ament_target_dependencies(imu_proc
@@ -176,6 +186,9 @@ target_include_directories(imu_proc PUBLIC
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
 )
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(imu_proc ${OpenMP_CXX_LIBRARIES})
+endif()
 
 add_library(laser_mapping src/LIVMapper.cpp)
 ament_target_dependencies(laser_mapping
@@ -199,8 +212,10 @@ target_include_directories(laser_mapping PUBLIC
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
 )
-
 ament_target_dependencies(laser_mapping livox_ros_driver2)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(laser_mapping ${OpenMP_CXX_LIBRARIES})
+endif()
 
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)
@@ -232,13 +247,51 @@ target_link_libraries(fastlivo_mapping
   imu_proc
   ${PCL_LIBRARIES}
   ${Boost_LIBRARIES}
-  ${OpenMP_CXX_LIBRARIES}
 )
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(fastlivo_mapping ${OpenMP_CXX_LIBRARIES})
+endif()
 ament_target_dependencies(fastlivo_mapping livox_ros_driver2)
 
 # Link mimalloc if found
 if(mimalloc_FOUND)
   target_link_libraries(fastlivo_mapping mimalloc)
+endif()
+
+# ============================================
+# Backend PGO Library (optional, requires GTSAM)
+# ============================================
+if(GTSAM_FOUND)
+  message(STATUS "Building backend PGO library (GTSAM found)")
+  add_library(backend STATIC
+    src/backend/pose_graph.cpp
+    src/backend/loop_detector.cpp
+  )
+  target_include_directories(backend PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    ${EIGEN3_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
+  )
+  target_link_libraries(backend
+    gtsam
+    ${PCL_LIBRARIES}
+  )
+  # Backend includes offline_liv_mapper.h which pulls in voxel_map.h, preprocess.h and ROS2 headers
+  ament_target_dependencies(backend
+    rclcpp
+    sensor_msgs
+    nav_msgs
+    geometry_msgs
+    visualization_msgs
+    pcl_conversions
+    livox_ros_driver2
+  )
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(backend ${OpenMP_CXX_LIBRARIES})
+  endif()
+else()
+  message(STATUS "Skipping backend PGO (GTSAM not found)")
 endif()
 
 # ============================================
@@ -269,6 +322,11 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
     yaml-cpp
   )
   
+  if(GTSAM_FOUND)
+    target_link_libraries(livo2_offline backend)
+    target_compile_definitions(livo2_offline PUBLIC USE_BACKEND)
+  endif()
+  
   ament_target_dependencies(livo2_offline
     rclcpp
     rosbag2_cpp
@@ -297,6 +355,10 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
     ${Boost_LIBRARIES}
   )
   
+  if(GTSAM_FOUND)
+    target_compile_definitions(run_livo2_offline PUBLIC USE_BACKEND)
+  endif()
+  
   ament_target_dependencies(run_livo2_offline
     rclcpp
     rosbag2_cpp
@@ -322,6 +384,10 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
     livo2_offline
     DESTINATION lib/${PROJECT_NAME}
   )
+  
+  if(GTSAM_FOUND)
+    install(TARGETS backend DESTINATION lib/${PROJECT_NAME})
+  endif()
   
 else()
   message(STATUS "Skipping offline module (missing rosbag2_cpp or yaml-cpp)")

@@ -74,3 +74,28 @@
       save_keyframes: true       # whether to save keyframe point clouds
       save_global_map: true      # whether to save merged global map
       global_map_resolution: 0.1 # voxel resolution for global map downsampling
+
+    backend:
+      enabled: true
+      pgo:
+        use_isam2: true
+        relinearize_threshold: 0.01
+        relinearize_skip: 1
+        prior_noise: 1e-12
+        odom_rot_noise: 1e-6
+        odom_trans_noise: 1e-4
+      loop_closure:
+        enabled: true
+        search_radius: 15.0
+        time_threshold: 60.0
+        fitness_threshold: 0.15
+        submap_half_range: 3
+        submap_resolution: 0.12
+        min_detect_interval: 10.0
+        icp_max_iterations: 50
+        icp_max_correspondence_dist: 10.0
+        icp_transform_epsilon: 1e-6
+        icp_fitness_epsilon: 1e-6
+      save_g2o: true
+      g2o_filename: "pose_graph.g2o"
+      save_loop_constraints: true

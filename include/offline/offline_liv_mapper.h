@@ -23,7 +23,6 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
-#include <pcl/filters/voxel_grid.h>
 
 #include "livox_ros_driver2/msg/custom_msg.hpp"
 
@@ -32,6 +31,13 @@
 #include "IMU_Processing.h"
 #include "preprocess.h"
 #include "voxel_map.h"
+
+#include "offline/keyframe_types.h"
+
+#ifdef USE_BACKEND
+#include "backend/pose_graph.h"
+#include "backend/loop_detector.h"
+#endif
 
 namespace livo2_offline {
 
@@ -56,22 +62,6 @@ struct OfflineConfig {
     bool save_keyframes = true;
     bool save_global_map = true;
     double global_map_resolution = 0.1;  // voxel resolution for global map
-};
-
-/**
- * @brief Keyframe structure for PGO preparation
- */
-struct KeyFrame {
-    size_t id;
-    double timestamp;
-    Eigen::Matrix3d rotation;
-    Eigen::Vector3d position;
-    PointCloudXYZI::Ptr body_cloud;  // Point cloud in body frame
-    
-    KeyFrame() : id(0), timestamp(0.0), 
-                 rotation(Eigen::Matrix3d::Identity()),
-                 position(Eigen::Vector3d::Zero()),
-                 body_cloud(new PointCloudXYZI()) {}
 };
 
 /**
@@ -140,7 +130,7 @@ public:
      * @brief Get all keyframes
      * @return Vector of keyframes
      */
-    const std::vector<KeyFrame>& keyframes() const { return keyframes_; }
+    const KeyFrameVector& keyframes() const { return keyframes_; }
     
     /**
      * @brief Get full trajectory
@@ -186,7 +176,14 @@ public:
      * @param resolution Voxel resolution for downsampling (0 = no downsampling)
      */
     void saveGlobalMap(const std::string& path, double resolution = 0.1) const;
-    
+
+#ifdef USE_BACKEND
+    /**
+     * @brief Save backend output (g2o, loop constraints) to output dir
+     */
+    void saveBackendOutput() const;
+#endif
+
     // === Configuration ===
     
     /**
@@ -256,8 +253,7 @@ private:
     Eigen::Vector3d ext_t_;
     Eigen::Matrix3d ext_r_;
     
-    // Downsampling filter
-    pcl::VoxelGrid<PointType> downsample_filter_;
+    // Downsampling: use small_gicp at call site (no PCL VoxelGrid member to avoid free() bug on destruct)
     double filter_size_surf_min_ = 0.1;
     
     // IMU settings
@@ -292,8 +288,8 @@ private:
     int half_map_size_ = 100;
     double sliding_thresh_ = 8.0;
     
-    // Keyframe management
-    std::vector<KeyFrame> keyframes_;
+    // Keyframe management (aligned allocator for Eigen members in KeyFrame)
+    KeyFrameVector keyframes_;
     Eigen::Vector3d last_kf_pos_;
     Eigen::Matrix3d last_kf_rot_;
     
@@ -303,7 +299,19 @@ private:
     // Incremental saving
     std::string incremental_output_dir_;
     bool incremental_save_enabled_ = false;
-    
+
+#ifdef USE_BACKEND
+    // Backend PGO and loop closure
+    bool backend_enabled_ = false;
+    PoseGraph::Config pgo_config_;
+    LoopDetector::Config loop_config_;
+    std::shared_ptr<PoseGraph> pose_graph_;
+    std::shared_ptr<LoopDetector> loop_detector_;
+    bool backend_save_g2o_ = true;
+    std::string backend_g2o_filename_ = "pose_graph.g2o";
+    bool backend_save_loop_constraints_ = true;
+#endif
+
     // === Internal methods ===
     
     /**
@@ -351,6 +359,13 @@ private:
      * @brief Store current pose to trajectory
      */
     void storePose();
+
+#ifdef USE_BACKEND
+    /**
+     * @brief Update keyframe global poses from pose graph optimization
+     */
+    void updateKeyframePoses();
+#endif
 };
 
 } // namespace livo2_offline

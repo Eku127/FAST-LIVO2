@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <chrono>
 #include <csignal>
+#include <fstream>
 
 #include "offline/bag_reader.h"
 #include "offline/offline_liv_mapper.h"
@@ -32,6 +33,9 @@ void signalHandler(int signum) {
         std::cout << "[Main] Saving intermediate results before exit..." << std::endl;
         g_mapper->savePosesTUM(g_output_dir + "/poses.txt");
         g_mapper->saveKeyframePoses(g_output_dir + "/keyframes.txt");
+#ifdef USE_BACKEND
+        g_mapper->saveBackendOutput();
+#endif
         // Note: keyframe clouds are saved incrementally, no need to save here
         std::cout << "[Main] Intermediate results saved." << std::endl;
     }
@@ -228,9 +232,7 @@ int main(int argc, char** argv) {
     // Start processing
     auto start_time = std::chrono::high_resolution_clock::now();
     std::cout << "\n[Main] Processing started..." << std::endl;
-    
     reader.Go();
-    
     // Process any remaining data
     while (mapper.processOnce() && !g_shutdown) {}
     
@@ -251,17 +253,20 @@ int main(int argc, char** argv) {
     
     // Save final results
     std::cout << "[Main] Saving final results..." << std::endl;
-    
     // Save full trajectory (TUM format)
     mapper.savePosesTUM(output_dir + "/poses.txt");
     
     // Save keyframe poses
     mapper.saveKeyframePoses(output_dir + "/keyframes.txt");
-    
+
+#ifdef USE_BACKEND
+    // Save backend output (g2o, loop constraints)
+    mapper.saveBackendOutput();
+#endif
+
     // Note: keyframe point clouds are saved incrementally during processing
     // Only save global map at the end (requires all keyframes)
     mapper.saveGlobalMap(output_dir + "/map.pcd", 0.1);
-    
     std::cout << "\n[Main] All results saved to: " << output_dir << std::endl;
     std::cout << "  - poses.txt       : Full trajectory (TUM format)\n"
               << "  - keyframes.txt   : Keyframe poses\n"
@@ -273,8 +278,6 @@ int main(int argc, char** argv) {
     
     // Explicitly shutdown mapper to cleanup resources before destructor
     mapper.shutdown();
-    
     std::cout << "[Main] Done!" << std::endl;
-    
     return g_shutdown ? 130 : 0;  // Return 130 if interrupted
 }

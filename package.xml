@@ -32,6 +32,9 @@
   <depend>visualization_msgs</depend>
   <depend>eigen3_cmake_module</depend>
 
+  <!-- Backend PGO: GTSAM is required for offline pose graph optimization.
+       Install system GTSAM, e.g. sudo apt install libgtsam-dev -->
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

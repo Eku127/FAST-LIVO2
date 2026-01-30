@@ -9,9 +9,14 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
+#include <chrono>
 
 #include <yaml-cpp/yaml.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl/memory.h>
+#include <small_gicp/pcl/pcl_point.hpp>
+#include <small_gicp/pcl/pcl_point_traits.hpp>
+#include <small_gicp/util/downsampling.hpp>
 
 namespace livo2_offline {
 
@@ -27,11 +32,7 @@ OfflineLIVMapper::OfflineLIVMapper(const OfflineConfig& config, const std::strin
 }
 
 OfflineLIVMapper::~OfflineLIVMapper() {
-    // Note: With smart pointers (shared_ptr), memory is automatically released.
-    // No manual cleanup needed - shared_ptr handles reference counting and deletion.
-    // Simply clearing the maps will decrease reference counts and free memory when appropriate.
     voxel_map_.clear();
-    
     if (voxelmap_manager_) {
         voxelmap_manager_->voxel_map_.clear();
     }
@@ -120,20 +121,54 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
     // Offline settings
     if (params["offline"]) {
         auto offline = params["offline"];
-        if (offline["keyframe_delta_trans"]) 
+        if (offline["keyframe_delta_trans"])
             offline_config_.keyframe_delta_trans = offline["keyframe_delta_trans"].as<double>();
-        if (offline["keyframe_delta_deg"]) 
+        if (offline["keyframe_delta_deg"])
             offline_config_.keyframe_delta_deg = offline["keyframe_delta_deg"].as<double>();
-        if (offline["output_dir"]) 
+        if (offline["output_dir"])
             offline_config_.output_dir = offline["output_dir"].as<std::string>();
-        if (offline["save_keyframes"]) 
+        if (offline["save_keyframes"])
             offline_config_.save_keyframes = offline["save_keyframes"].as<bool>();
-        if (offline["save_global_map"]) 
+        if (offline["save_global_map"])
             offline_config_.save_global_map = offline["save_global_map"].as<bool>();
-        if (offline["global_map_resolution"]) 
+        if (offline["global_map_resolution"])
             offline_config_.global_map_resolution = offline["global_map_resolution"].as<double>();
     }
-    
+
+#ifdef USE_BACKEND
+    // Backend PGO and loop closure settings
+    if (params["backend"]) {
+        auto backend = params["backend"];
+        if (backend["enabled"]) backend_enabled_ = backend["enabled"].as<bool>();
+        if (backend["save_g2o"]) backend_save_g2o_ = backend["save_g2o"].as<bool>();
+        if (backend["g2o_filename"]) backend_g2o_filename_ = backend["g2o_filename"].as<std::string>();
+        if (backend["save_loop_constraints"]) backend_save_loop_constraints_ = backend["save_loop_constraints"].as<bool>();
+        if (backend["pgo"]) {
+            auto pgo = backend["pgo"];
+            if (pgo["use_isam2"]) pgo_config_.use_isam2 = pgo["use_isam2"].as<bool>();
+            if (pgo["relinearize_threshold"]) pgo_config_.relinearize_threshold = pgo["relinearize_threshold"].as<double>();
+            if (pgo["relinearize_skip"]) pgo_config_.relinearize_skip = pgo["relinearize_skip"].as<int>();
+            if (pgo["prior_noise"]) pgo_config_.prior_noise = pgo["prior_noise"].as<double>();
+            if (pgo["odom_rot_noise"]) pgo_config_.odom_rot_noise = pgo["odom_rot_noise"].as<double>();
+            if (pgo["odom_trans_noise"]) pgo_config_.odom_trans_noise = pgo["odom_trans_noise"].as<double>();
+        }
+        if (backend["loop_closure"]) {
+            auto lc = backend["loop_closure"];
+            if (lc["search_radius"]) loop_config_.search_radius = lc["search_radius"].as<double>();
+            if (lc["time_threshold"]) loop_config_.time_threshold = lc["time_threshold"].as<double>();
+            if (lc["fitness_threshold"]) loop_config_.fitness_threshold = lc["fitness_threshold"].as<double>();
+            if (lc["submap_half_range"]) loop_config_.submap_half_range = lc["submap_half_range"].as<int>();
+            if (lc["submap_resolution"]) loop_config_.submap_resolution = lc["submap_resolution"].as<double>();
+            if (lc["min_detect_interval"]) loop_config_.min_detect_interval = lc["min_detect_interval"].as<double>();
+            // small_gicp GICP parameters (replaces PCL ICP)
+            if (lc["gicp_max_iterations"]) loop_config_.gicp_max_iterations = lc["gicp_max_iterations"].as<int>();
+            if (lc["gicp_max_correspondence_dist"]) loop_config_.gicp_max_correspondence_dist = lc["gicp_max_correspondence_dist"].as<double>();
+            if (lc["gicp_num_threads"]) loop_config_.gicp_num_threads = lc["gicp_num_threads"].as<int>();
+            if (lc["gicp_correspondence_randomness"]) loop_config_.gicp_correspondence_randomness = lc["gicp_correspondence_randomness"].as<int>();
+        }
+    }
+#endif
+
     // Extrinsics
     ext_t_ = Eigen::Vector3d::Zero();
     ext_r_ = Eigen::Matrix3d::Identity();
@@ -220,8 +255,7 @@ void OfflineLIVMapper::initComponents() {
     voxelmap_manager_->extT_ = ext_t_;
     voxelmap_manager_->extR_ = ext_r_;
     
-    // Initialize downsampling filter
-    downsample_filter_.setLeafSize(filter_size_surf_min_, filter_size_surf_min_, filter_size_surf_min_);
+    // Downsampling uses small_gicp::voxelgrid_sampling in handleLIO() (no PCL VoxelGrid member)
     
     // Set SLAM mode
     slam_mode_ = imu_en_ ? ONLY_LIO : ONLY_LO;
@@ -234,7 +268,15 @@ void OfflineLIVMapper::initComponents() {
     // Initialize keyframe tracking
     last_kf_pos_ = Eigen::Vector3d::Zero();
     last_kf_rot_ = Eigen::Matrix3d::Identity();
-    
+
+#ifdef USE_BACKEND
+    if (backend_enabled_) {
+        pose_graph_ = std::make_shared<PoseGraph>(pgo_config_);
+        loop_detector_ = std::make_shared<LoopDetector>(loop_config_);
+        std::cout << "[OfflineLIVMapper] Backend PGO and loop closure enabled" << std::endl;
+    }
+#endif
+
     std::cout << "[OfflineLIVMapper] Components initialized" << std::endl;
 }
 
@@ -415,9 +457,32 @@ void OfflineLIVMapper::handleLIO() {
         return;
     }
     
-    // Downsample
-    downsample_filter_.setInputCloud(feats_undistort_);
-    downsample_filter_.filter(*feats_down_body_);
+    // Downsample with small_gicp (avoids PCL VoxelGrid destructor free() bug)
+    {
+        auto xyz_in = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        xyz_in->reserve(feats_undistort_->size());
+        for (const auto& pt : feats_undistort_->points) {
+            pcl::PointXYZ p;
+            p.x = pt.x;
+            p.y = pt.y;
+            p.z = pt.z;
+            xyz_in->push_back(p);
+        }
+        auto xyz_down = small_gicp::voxelgrid_sampling(*xyz_in, filter_size_surf_min_);
+        feats_down_body_ = pcl::make_shared<PointCloudXYZI>();
+        feats_down_body_->reserve(xyz_down->size());
+        for (const auto& pt : xyz_down->points) {
+            PointType p;
+            p.x = pt.x;
+            p.y = pt.y;
+            p.z = pt.z;
+            p.intensity = 0;
+            feats_down_body_->points.push_back(p);
+        }
+        feats_down_body_->width = feats_down_body_->points.size();
+        feats_down_body_->height = 1;
+        feats_down_body_->is_dense = true;
+    }
     
     int feats_down_size = feats_down_body_->points.size();
     voxelmap_manager_->feats_down_body_ = feats_down_body_;
@@ -441,14 +506,20 @@ void OfflineLIVMapper::handleLIO() {
     PointCloudXYZI::Ptr world_lidar(new PointCloudXYZI());
     transformLidar(state_.rot_end, state_.pos_end, feats_down_body_, world_lidar);
     
-    for (size_t i = 0; i < world_lidar->points.size(); i++) {
-        voxelmap_manager_->pv_list_[i].point_w << world_lidar->points[i].x, 
-                                                   world_lidar->points[i].y, 
+    const size_t n_update = std::min(static_cast<size_t>(world_lidar->points.size()),
+                                    voxelmap_manager_->pv_list_.size());
+    if (n_update != world_lidar->points.size()) {
+        std::cerr << "[OfflineLIVMapper] pv_list size mismatch: world_lidar=" << world_lidar->points.size()
+                  << " pv_list=" << voxelmap_manager_->pv_list_.size() << std::endl;
+    }
+    for (size_t i = 0; i < n_update; i++) {
+        voxelmap_manager_->pv_list_[i].point_w << world_lidar->points[i].x,
+                                                   world_lidar->points[i].y,
                                                    world_lidar->points[i].z;
         Eigen::Matrix3d point_crossmat = voxelmap_manager_->cross_mat_list_[i];
         Eigen::Matrix3d var = voxelmap_manager_->body_cov_list_[i];
         var = (state_.rot_end * ext_r_) * var * (state_.rot_end * ext_r_).transpose() +
-              (-point_crossmat) * state_.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + 
+              (-point_crossmat) * state_.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() +
               state_.cov.block<3, 3>(3, 3);
         voxelmap_manager_->pv_list_[i].var = var;
     }
@@ -513,25 +584,56 @@ void OfflineLIVMapper::extractKeyFrame() {
     KeyFrame kf;
     kf.id = keyframes_.size();
     kf.timestamp = lidar_measures_.measures.back().lio_time;
-    kf.rotation = state_.rot_end;
-    kf.position = state_.pos_end;
-    
+    kf.r_local = state_.rot_end;
+    kf.t_local = state_.pos_end;
+#ifdef USE_BACKEND
+    if (backend_enabled_ && pose_graph_) {
+        kf.r_global = pose_graph_->offsetR() * state_.rot_end;
+        kf.t_global = pose_graph_->offsetR() * state_.pos_end + pose_graph_->offsetT();
+    } else
+#endif
+    {
+        kf.r_global = state_.rot_end;
+        kf.t_global = state_.pos_end;
+    }
+    kf.pose_covariance = state_.cov.block<6, 6>(0, 0);
+
     // Copy body frame point cloud
     kf.body_cloud.reset(new PointCloudXYZI(*feats_down_body_));
-    
+
+#ifdef USE_BACKEND
+    if (backend_enabled_ && pose_graph_) {
+        const KeyFrame* prev_kf = keyframes_.empty() ? nullptr : &keyframes_.back();
+        pose_graph_->addKeyframe(kf, prev_kf);
+    }
+#endif
+
     // Immediately save keyframe cloud if incremental saving is enabled
     if (incremental_save_enabled_) {
         std::string filename = incremental_output_dir_ + "/keyframes/" + std::to_string(kf.id) + ".pcd";
         pcl::io::savePCDFileBinary(filename, *kf.body_cloud);
     }
-    
+
     keyframes_.push_back(kf);
     last_kf_pos_ = state_.pos_end;
     last_kf_rot_ = state_.rot_end;
-    
-    std::cout << "[OfflineLIVMapper] KeyFrame #" << kf.id 
+
+#ifdef USE_BACKEND
+    if (backend_enabled_ && pose_graph_ && loop_detector_) {
+        auto loop = loop_detector_->detect(keyframes_, kf.id);
+        if (loop) {
+            pose_graph_->addLoopConstraint(*loop);
+            std::cout << "[OfflineLIVMapper] Loop closure: " << loop->target_id << " <-> " << loop->source_id
+                      << " score=" << loop->fitness_score << std::endl;
+        }
+        pose_graph_->optimize();
+        updateKeyframePoses();
+    }
+#endif
+
+    std::cout << "[OfflineLIVMapper] KeyFrame #" << kf.id
               << " t=" << std::fixed << std::setprecision(3) << kf.timestamp
-              << " pos=" << kf.position.transpose() << std::endl;
+              << " pos=" << kf.t_global.transpose() << std::endl;
 }
 
 void OfflineLIVMapper::storePose() {
@@ -561,25 +663,17 @@ void OfflineLIVMapper::setOutputDirectory(const std::string& dir) {
 }
 
 void OfflineLIVMapper::shutdown() {
-    // Clear keyframes to release point cloud memory
     keyframes_.clear();
     trajectory_.clear();
-    
-    // Clear VoxelMapManager's voxel map (shared_ptr handles cleanup automatically)
     if (voxelmap_manager_) {
         voxelmap_manager_->voxel_map_.clear();
         voxelmap_manager_.reset();
     }
-    
-    // Clear point clouds
     if (feats_undistort_) feats_undistort_->clear();
     if (feats_down_body_) feats_down_body_->clear();
     if (feats_down_world_) feats_down_world_->clear();
-    
-    // Clear IMU processor
     p_imu_.reset();
     p_pre_.reset();
-    
     std::cout << "[OfflineLIVMapper] Shutdown complete" << std::endl;
 }
 
@@ -619,10 +713,9 @@ void OfflineLIVMapper::saveKeyframePoses(const std::string& path) const {
     file << std::fixed << std::setprecision(9);
     
     for (const auto& kf : keyframes_) {
-        Eigen::Quaterniond q(kf.rotation);
-        
+        Eigen::Quaterniond q(kf.r_global);
         file << kf.id << " " << kf.timestamp << " "
-             << kf.position.x() << " " << kf.position.y() << " " << kf.position.z() << " "
+             << kf.t_global.x() << " " << kf.t_global.y() << " " << kf.t_global.z() << " "
              << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
              << std::endl;
     }
@@ -649,20 +742,21 @@ void OfflineLIVMapper::saveKeyframeClouds(const std::string& dir) const {
 }
 
 void OfflineLIVMapper::saveGlobalMap(const std::string& path, double resolution) const {
-    PointCloudXYZI::Ptr global_map(new PointCloudXYZI());
+    // Use pcl::make_shared for Eigen-aligned allocator (avoids SIGSEGV in free on exit)
+    PointCloudXYZI::Ptr global_map = pcl::make_shared<PointCloudXYZI>();
     
     for (const auto& kf : keyframes_) {
-        PointCloudXYZI::Ptr world_cloud(new PointCloudXYZI());
+        PointCloudXYZI::Ptr world_cloud = pcl::make_shared<PointCloudXYZI>();
         
         // Transform body cloud to world frame
         for (const auto& p_body : kf.body_cloud->points) {
             Eigen::Vector3d p(p_body.x, p_body.y, p_body.z);
-            p = kf.rotation * (ext_r_ * p + ext_t_) + kf.position;
+            p = kf.r_global * (ext_r_ * p + ext_t_) + kf.t_global;
             
             PointType p_world;
-            p_world.x = p.x();
-            p_world.y = p.y();
-            p_world.z = p.z();
+            p_world.x = static_cast<float>(p.x());
+            p_world.y = static_cast<float>(p.y());
+            p_world.z = static_cast<float>(p.z());
             p_world.intensity = p_body.intensity;
             world_cloud->points.push_back(p_world);
         }
@@ -670,14 +764,31 @@ void OfflineLIVMapper::saveGlobalMap(const std::string& path, double resolution)
         *global_map += *world_cloud;
     }
     
-    // Downsample if resolution > 0
+    // Downsample using small_gicp instead of PCL VoxelGrid (avoids PCL free() bug on destruct)
     if (resolution > 0 && !global_map->empty()) {
-        PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
-        pcl::VoxelGrid<PointType> filter;
-        filter.setInputCloud(global_map);
-        filter.setLeafSize(resolution, resolution, resolution);
-        filter.filter(*filtered);
-        global_map = filtered;
+        auto xyz_cloud = pcl::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        xyz_cloud->reserve(global_map->size());
+        for (const auto& pt : global_map->points) {
+            pcl::PointXYZ p;
+            p.x = pt.x;
+            p.y = pt.y;
+            p.z = pt.z;
+            xyz_cloud->push_back(p);
+        }
+        auto downsampled_xyz = small_gicp::voxelgrid_sampling(*xyz_cloud, resolution);
+        global_map = pcl::make_shared<PointCloudXYZI>();
+        global_map->reserve(downsampled_xyz->size());
+        for (const auto& pt : downsampled_xyz->points) {
+            PointType p_out;
+            p_out.x = pt.x;
+            p_out.y = pt.y;
+            p_out.z = pt.z;
+            p_out.intensity = 0;
+            global_map->points.push_back(p_out);
+        }
+        global_map->width = global_map->points.size();
+        global_map->height = 1;
+        global_map->is_dense = true;
     }
     
     if (!global_map->empty()) {
@@ -688,5 +799,42 @@ void OfflineLIVMapper::saveGlobalMap(const std::string& path, double resolution)
         std::cerr << "[OfflineLIVMapper] Global map is empty, not saved" << std::endl;
     }
 }
+
+#ifdef USE_BACKEND
+void OfflineLIVMapper::updateKeyframePoses() {
+    if (!pose_graph_ || keyframes_.empty()) return;
+    std::vector<Eigen::Isometry3d> poses = pose_graph_->getOptimizedPoses();
+    if (poses.size() != keyframes_.size()) return;
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+        keyframes_[i].r_global = poses[i].linear();
+        keyframes_[i].t_global = poses[i].translation();
+    }
+}
+
+void OfflineLIVMapper::saveBackendOutput() const {
+    if (!backend_enabled_ || !pose_graph_) return;
+    namespace fs = std::filesystem;
+    std::string out_dir = incremental_save_enabled_ ? incremental_output_dir_ : offline_config_.output_dir;
+    if (out_dir.empty()) out_dir = "./output";
+    fs::create_directories(out_dir);
+    if (backend_save_g2o_) {
+        std::string g2o_path = out_dir + "/" + backend_g2o_filename_;
+        pose_graph_->saveG2o(g2o_path);
+    }
+    if (backend_save_loop_constraints_ && loop_detector_) {
+        const auto& pairs = loop_detector_->historyPairs();
+        if (!pairs.empty()) {
+            std::string loop_path = out_dir + "/loop_constraints.txt";
+            std::ofstream f(loop_path);
+            if (f.is_open()) {
+                f << "# target_id source_id\n";
+                for (const auto& p : pairs) f << p.first << " " << p.second << "\n";
+                f.close();
+                std::cout << "[OfflineLIVMapper] Saved " << pairs.size() << " loop constraints to: " << loop_path << std::endl;
+            }
+        }
+    }
+}
+#endif
 
 } // namespace livo2_offline

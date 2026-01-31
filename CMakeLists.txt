@@ -18,9 +18,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Set build type
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE "Release")
+# Set build type - default to Release for performance
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Release/Debug/RelWithDebInfo/MinSizeRel)" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Release" "Debug" "RelWithDebInfo" "MinSizeRel")
 endif()
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 
@@ -33,62 +34,51 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -g")
 # Detect CPU architecture
 message(STATUS "Current CPU architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 
-# Specific settings for Release build
+# Release build: architecture-specific optimizations (-march=native / -mcpu=native)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64|ARM|AARCH64)")
+  add_definitions(-DARM_ARCH)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    # 64-bit ARM optimizations (e.g., RK3588 and Jetson Orin NX)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mcpu=native -mtune=native -ffast-math")
     message(STATUS "Using 64-bit ARM optimizations: -O3 -mcpu=native -mtune=native -ffast-math")
   else()
-    # 32-bit ARM optimizations with NEON support
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mcpu=native -mtune=native -mfpu=neon -ffast-math")
     message(STATUS "Using 32-bit ARM optimizations: -O3 -mcpu=native -mtune=native -mfpu=neon -ffast-math")
   endif()
-  add_definitions(-DARM_ARCH)
 else()
-  # x86-64 (Intel/AMD) optimizations
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops")
-  message(STATUS "Using general x86 optimizations: -O3 -march=native -mtune=native -funroll-loops") 
   add_definitions(-DX86_ARCH)
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops")
+  message(STATUS "Using x86 optimizations: -O3 -march=native -mtune=native -funroll-loops")
 endif()
 
-# Define project root directory
+# Define project root directory (colcon/ament compatible: CMAKE_CURRENT_SOURCE_DIR = package source dir)
 add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
-# Detect CPU core count for potential multithreading optimization
+# Multithreading: use up to 4 cores (colcon runs each package's CMake independently, no conflict)
 include(ProcessorCount)
 ProcessorCount(N)
-message(STATUS "Processor count: ${N}")
-
-# Set the number of cores for multithreading
 if(N GREATER 4)
-  math(EXPR PROC_NUM "4")
+  set(PROC_NUM 4)
+else()
+  set(PROC_NUM 1)
+endif()
+message(STATUS "Processor count: ${N}, using ${PROC_NUM} for multithreading")
+if(PROC_NUM GREATER 1)
   add_definitions(-DMP_EN -DMP_PROC_NUM=${PROC_NUM})
-  message(STATUS "Multithreading enabled. Cores: ${PROC_NUM}")
-elseif(N GREATER 1)
-  math(EXPR PROC_NUM "${N}")
-  add_definitions(-DMP_EN -DMP_PROC_NUM=${PROC_NUM})
-  message(STATUS "Multithreading enabled. Cores: ${PROC_NUM}")
 else()
   add_definitions(-DMP_PROC_NUM=1)
-  message(STATUS "Single core detected. Multithreading disabled.")
 endif()
 
-# Check for OpenMP support
+# Optional: OpenMP (used by voxel_map, preprocess, etc.)
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)
   message(STATUS "OpenMP found")
   add_compile_options(${OpenMP_CXX_FLAGS})
-else()
-  message(STATUS "OpenMP not found, proceeding without it")
 endif()
 
-# Check for mimalloc support
+# Optional: mimalloc (linked into main/offline executables if found)
 find_package(mimalloc QUIET)
 if(mimalloc_FOUND)
   message(STATUS "mimalloc found")
-else()
-  message(STATUS "mimalloc not found, proceeding without it")
 endif()
 
 # Find ament_cmake and required dependencies
@@ -111,8 +101,11 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Boost REQUIRED COMPONENTS thread)
 
-# Backend PGO (required when building offline module)
-find_package(GTSAM QUIET)
+# Backend PGO dependencies
+# MIAO optimizer (replacing GTSAM)
+find_package(Sophus REQUIRED)
+find_package(TBB REQUIRED)
+find_package(glog REQUIRED)
 
 # Offline processing dependencies
 find_package(rosbag2_cpp QUIET)
@@ -124,7 +117,11 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/small_gicp/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miao
 )
+
+# Add MIAO optimizer library
+add_subdirectory(thirdparty/miao)
 
 # Add libraries
 add_library(lio src/voxel_map.cpp)
@@ -259,39 +256,39 @@ if(mimalloc_FOUND)
 endif()
 
 # ============================================
-# Backend PGO Library (optional, requires GTSAM)
+# Backend PGO Library (using MIAO optimizer)
 # ============================================
-if(GTSAM_FOUND)
-  message(STATUS "Building backend PGO library (GTSAM found)")
-  add_library(backend STATIC
-    src/backend/pose_graph.cpp
-    src/backend/loop_detector.cpp
-  )
-  target_include_directories(backend PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-    ${EIGEN3_INCLUDE_DIR}
-    ${PCL_INCLUDE_DIRS}
-  )
-  target_link_libraries(backend
-    gtsam
-    ${PCL_LIBRARIES}
-  )
-  # Backend includes offline_liv_mapper.h which pulls in voxel_map.h, preprocess.h and ROS2 headers
-  ament_target_dependencies(backend
-    rclcpp
-    sensor_msgs
-    nav_msgs
-    geometry_msgs
-    visualization_msgs
-    pcl_conversions
-    livox_ros_driver2
-  )
-  if(OpenMP_CXX_FOUND)
-    target_link_libraries(backend ${OpenMP_CXX_LIBRARIES})
-  endif()
-else()
-  message(STATUS "Skipping backend PGO (GTSAM not found)")
+message(STATUS "Building backend PGO library with MIAO optimizer")
+add_library(backend STATIC
+  src/backend/pose_graph.cpp
+  src/backend/loop_detector.cpp
+)
+target_include_directories(backend PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miao
+)
+target_link_libraries(backend
+  miao
+  Sophus::Sophus
+  ${GLOG_LIBRARIES}
+  glog::glog
+  ${PCL_LIBRARIES}
+)
+# Backend includes offline_liv_mapper.h which pulls in voxel_map.h, preprocess.h and ROS2 headers
+ament_target_dependencies(backend
+  rclcpp
+  sensor_msgs
+  nav_msgs
+  geometry_msgs
+  visualization_msgs
+  pcl_conversions
+  livox_ros_driver2
+)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(backend ${OpenMP_CXX_LIBRARIES})
 endif()
 
 # ============================================
@@ -317,15 +314,12 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
     lio
     pre
     imu_proc
+    backend
     ${PCL_LIBRARIES}
     ${Boost_LIBRARIES}
     yaml-cpp
   )
-  
-  if(GTSAM_FOUND)
-    target_link_libraries(livo2_offline backend)
-    target_compile_definitions(livo2_offline PUBLIC USE_BACKEND)
-  endif()
+  target_compile_definitions(livo2_offline PUBLIC USE_BACKEND)
   
   ament_target_dependencies(livo2_offline
     rclcpp
@@ -354,10 +348,7 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
     ${PCL_LIBRARIES}
     ${Boost_LIBRARIES}
   )
-  
-  if(GTSAM_FOUND)
-    target_compile_definitions(run_livo2_offline PUBLIC USE_BACKEND)
-  endif()
+  target_compile_definitions(run_livo2_offline PUBLIC USE_BACKEND)
   
   ament_target_dependencies(run_livo2_offline
     rclcpp
@@ -382,12 +373,9 @@ if(rosbag2_cpp_FOUND AND yaml-cpp_FOUND)
   install(TARGETS
     run_livo2_offline
     livo2_offline
+    backend
     DESTINATION lib/${PROJECT_NAME}
   )
-  
-  if(GTSAM_FOUND)
-    install(TARGETS backend DESTINATION lib/${PROJECT_NAME})
-  endif()
   
 else()
   message(STATUS "Skipping offline module (missing rosbag2_cpp or yaml-cpp)")

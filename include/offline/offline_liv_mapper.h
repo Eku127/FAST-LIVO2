@@ -49,9 +49,9 @@ struct OfflineConfig {
     std::string lidar_topic = "/livox/lidar";
     std::string imu_topic = "/livox/imu";
     
-    // Keyframe thresholds
-    double keyframe_delta_trans = 0.5;  // meters
-    double keyframe_delta_deg = 10.0;   // degrees
+    // Keyframe thresholds (aligned with lightning-lm: kf_dis_th_=2.0, kf_angle_th_=15°)
+    double keyframe_delta_trans = 2.0;  // meters
+    double keyframe_delta_deg = 15.0;   // degrees
     
     // Processing settings
     bool dense_map = false;
@@ -159,10 +159,23 @@ public:
     void savePosesTUM(const std::string& path) const;
     
     /**
-     * @brief Save keyframe poses
-     * @param path Output file path
+     * @brief Save keyframe poses (before PGO when backend enabled, else current)
+     * @param path Output file path (e.g. keyframes.txt)
      */
     void saveKeyframePoses(const std::string& path) const;
+
+#ifdef USE_BACKEND
+    /**
+     * @brief Number of loop closures detected (0 => PGO before/after poses will be almost identical)
+     */
+    size_t loopClosureCount() const;
+
+    /**
+     * @brief Save optimized keyframe poses (after PGO)
+     * @param path Output file path (e.g. keyframe_opt.txt)
+     */
+    void saveKeyframePosesOpt(const std::string& path) const;
+#endif
     
     /**
      * @brief Save all keyframe point clouds
@@ -303,8 +316,8 @@ private:
 #ifdef USE_BACKEND
     // Backend PGO and loop closure
     bool backend_enabled_ = false;
-    PoseGraph::Config pgo_config_;
-    LoopDetector::Config loop_config_;
+    PoseGraph::Options pgo_options_;
+    LoopDetector::Options loop_options_;
     std::shared_ptr<PoseGraph> pose_graph_;
     std::shared_ptr<LoopDetector> loop_detector_;
     bool backend_save_g2o_ = true;

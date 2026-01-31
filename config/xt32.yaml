@@ -69,8 +69,8 @@
       # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
 
     offline:
-      keyframe_delta_trans: 1.0  # meters, translation threshold for keyframe extraction
-      keyframe_delta_deg: 10.0   # degrees, rotation threshold for keyframe extraction
+      keyframe_delta_trans: 2.0  # meters (aligned with lightning-lm kf_dis_th_)
+      keyframe_delta_deg: 15.0   # degrees (aligned with lightning-lm kf_angle_th_)
       output_dir: "./output"     # output directory for results
       save_keyframes: true       # whether to save keyframe point clouds
       save_global_map: true      # whether to save merged global map
@@ -82,18 +82,28 @@
         use_isam2: true
         relinearize_threshold: 0.01
         relinearize_skip: 1
-        prior_noise: 1e-12
-        odom_rot_noise: 1e-6
-        odom_trans_noise: 1e-4
+        # Prior noise: 6-dim variance (rot x3, trans x3), rad^2 and m^2
+        # Ref: FAST-LIO-SAM-SC-QN uses (1e-4, 1e-4, 1e-4, 1e-2, 1e-2, 1e-2)
+        prior_rot_noise: 1e-4
+        prior_trans_noise: 1e-2
+        # Odometry between factor noise (variance)
+        odom_rot_noise: 1e-4
+        odom_trans_noise: 1e-2
+        # Loop closure noise: uses ICP fitness_score as variance, clamped by this min
+        loop_noise_min: 1e-6
       loop_closure:
         enabled: true
-        search_radius: 5.0
-        time_threshold: 60.0
-        fitness_threshold: 0.15
-        submap_half_range: 3
-        submap_resolution: 0.12
+        # Outdoor/grass: larger search_radius (drift), shorter time_threshold, relaxed fitness
+        search_radius: 5.0   # was 10.0; drift can put "same place" >10m apart in est. trajectory
+        time_threshold: 30.0  # was 60.0; allow loops within ~30s
+        fitness_threshold: 0.2  # was 0.20; grass has less structure, GICP score often higher
+        submap_half_range: 5
+        submap_resolution: 0.15
         min_detect_interval: 10.0
-        icp_max_iterations: 50
+        verbose: true   # log why loop is not detected (no candidate / GICP / fitness)
+        gicp_max_iterations: 80
+        gicp_max_correspondence_dist: 10.0
+        icp_max_iterations: 80
         icp_max_correspondence_dist: 10.0
         icp_transform_epsilon: 1e-6
         icp_fitness_epsilon: 1e-6

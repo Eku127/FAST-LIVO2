@@ -256,10 +256,11 @@ int main(int argc, char** argv) {
     // Save full trajectory (TUM format)
     mapper.savePosesTUM(output_dir + "/poses.txt");
     
-    // Save keyframe poses
+    // Save keyframe poses (before PGO to keyframes.txt when backend enabled)
     mapper.saveKeyframePoses(output_dir + "/keyframes.txt");
-
 #ifdef USE_BACKEND
+    // Save optimized keyframe poses (after PGO) for visualize_pgo_before_after
+    mapper.saveKeyframePosesOpt(output_dir + "/keyframe_opt.txt");
     // Save backend output (g2o, loop constraints)
     mapper.saveBackendOutput();
 #endif
@@ -268,9 +269,20 @@ int main(int argc, char** argv) {
     // Only save global map at the end (requires all keyframes)
     mapper.saveGlobalMap(output_dir + "/map.pcd", 0.1);
     std::cout << "\n[Main] All results saved to: " << output_dir << std::endl;
+#ifdef USE_BACKEND
+    size_t num_loops = mapper.loopClosureCount();
+    std::cout << "  Loop closures detected: " << num_loops;
+    if (num_loops == 0) {
+        std::cout << " (PGO before/after poses will be almost identical without loops; see docs/offline_backend_test.md)";
+    }
+    std::cout << std::endl;
+#endif
     std::cout << "  - poses.txt       : Full trajectory (TUM format)\n"
-              << "  - keyframes.txt   : Keyframe poses\n"
-              << "  - keyframes/      : Keyframe point clouds (saved incrementally)\n"
+              << "  - keyframes.txt   : Keyframe poses"
+#ifdef USE_BACKEND
+              << " (before PGO)\n  - keyframe_opt.txt: Keyframe poses (after PGO)"
+#endif
+              << "\n  - keyframes/      : Keyframe point clouds (saved incrementally)\n"
               << "  - map.pcd         : Global map\n" << std::endl;
     
     // Clear global mapper pointer before exit

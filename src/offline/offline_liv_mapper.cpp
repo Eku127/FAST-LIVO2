@@ -145,26 +145,35 @@ void OfflineLIVMapper::initFromYaml(const std::string& yaml_path) {
         if (backend["save_loop_constraints"]) backend_save_loop_constraints_ = backend["save_loop_constraints"].as<bool>();
         if (backend["pgo"]) {
             auto pgo = backend["pgo"];
-            if (pgo["use_isam2"]) pgo_config_.use_isam2 = pgo["use_isam2"].as<bool>();
-            if (pgo["relinearize_threshold"]) pgo_config_.relinearize_threshold = pgo["relinearize_threshold"].as<double>();
-            if (pgo["relinearize_skip"]) pgo_config_.relinearize_skip = pgo["relinearize_skip"].as<int>();
-            if (pgo["prior_noise"]) pgo_config_.prior_noise = pgo["prior_noise"].as<double>();
-            if (pgo["odom_rot_noise"]) pgo_config_.odom_rot_noise = pgo["odom_rot_noise"].as<double>();
-            if (pgo["odom_trans_noise"]) pgo_config_.odom_trans_noise = pgo["odom_trans_noise"].as<double>();
+            // MIAO optimizer options
+            if (pgo["verbose"]) pgo_options_.verbose = pgo["verbose"].as<bool>();
+            if (pgo["incremental_mode"]) pgo_options_.incremental_mode = pgo["incremental_mode"].as<bool>();
+            if (pgo["max_iterations"]) pgo_options_.max_iterations = pgo["max_iterations"].as<int>();
+            // Noise parameters (MIAO uses translation first, rotation second)
+            if (pgo["prior_rot_noise"]) pgo_options_.prior_rot_noise = pgo["prior_rot_noise"].as<double>();
+            if (pgo["prior_trans_noise"]) pgo_options_.prior_trans_noise = pgo["prior_trans_noise"].as<double>();
+            if (pgo["odom_rot_noise"]) pgo_options_.odom_rot_noise = pgo["odom_rot_noise"].as<double>();
+            if (pgo["odom_trans_noise"]) pgo_options_.odom_trans_noise = pgo["odom_trans_noise"].as<double>();
+            if (pgo["loop_rot_noise"]) pgo_options_.loop_rot_noise = pgo["loop_rot_noise"].as<double>();
+            if (pgo["loop_trans_noise"]) pgo_options_.loop_trans_noise = pgo["loop_trans_noise"].as<double>();
+            // Robust kernel options
+            if (pgo["use_robust_kernel"]) pgo_options_.use_robust_kernel = pgo["use_robust_kernel"].as<bool>();
+            if (pgo["robust_kernel_delta"]) pgo_options_.robust_kernel_delta = pgo["robust_kernel_delta"].as<double>();
         }
         if (backend["loop_closure"]) {
             auto lc = backend["loop_closure"];
-            if (lc["search_radius"]) loop_config_.search_radius = lc["search_radius"].as<double>();
-            if (lc["time_threshold"]) loop_config_.time_threshold = lc["time_threshold"].as<double>();
-            if (lc["fitness_threshold"]) loop_config_.fitness_threshold = lc["fitness_threshold"].as<double>();
-            if (lc["submap_half_range"]) loop_config_.submap_half_range = lc["submap_half_range"].as<int>();
-            if (lc["submap_resolution"]) loop_config_.submap_resolution = lc["submap_resolution"].as<double>();
-            if (lc["min_detect_interval"]) loop_config_.min_detect_interval = lc["min_detect_interval"].as<double>();
-            // small_gicp GICP parameters (replaces PCL ICP)
-            if (lc["gicp_max_iterations"]) loop_config_.gicp_max_iterations = lc["gicp_max_iterations"].as<int>();
-            if (lc["gicp_max_correspondence_dist"]) loop_config_.gicp_max_correspondence_dist = lc["gicp_max_correspondence_dist"].as<double>();
-            if (lc["gicp_num_threads"]) loop_config_.gicp_num_threads = lc["gicp_num_threads"].as<int>();
-            if (lc["gicp_correspondence_randomness"]) loop_config_.gicp_correspondence_randomness = lc["gicp_correspondence_randomness"].as<int>();
+            if (lc["verbose"]) loop_options_.verbose = lc["verbose"].as<bool>();
+            if (lc["search_radius"]) loop_options_.search_radius = lc["search_radius"].as<double>();
+            if (lc["time_threshold"]) loop_options_.time_threshold = lc["time_threshold"].as<double>();
+            if (lc["fitness_threshold"]) loop_options_.fitness_threshold = lc["fitness_threshold"].as<double>();
+            if (lc["submap_half_range"]) loop_options_.submap_half_range = lc["submap_half_range"].as<int>();
+            if (lc["submap_resolution"]) loop_options_.submap_resolution = lc["submap_resolution"].as<double>();
+            if (lc["min_detect_interval"]) loop_options_.min_detect_interval = lc["min_detect_interval"].as<double>();
+            // small_gicp GICP parameters
+            if (lc["gicp_max_iterations"]) loop_options_.gicp_max_iterations = lc["gicp_max_iterations"].as<int>();
+            if (lc["gicp_max_correspondence_dist"]) loop_options_.gicp_max_correspondence_dist = lc["gicp_max_correspondence_dist"].as<double>();
+            if (lc["gicp_num_threads"]) loop_options_.gicp_num_threads = lc["gicp_num_threads"].as<int>();
+            if (lc["gicp_correspondence_randomness"]) loop_options_.gicp_correspondence_randomness = lc["gicp_correspondence_randomness"].as<int>();
         }
     }
 #endif
@@ -271,9 +280,9 @@ void OfflineLIVMapper::initComponents() {
 
 #ifdef USE_BACKEND
     if (backend_enabled_) {
-        pose_graph_ = std::make_shared<PoseGraph>(pgo_config_);
-        loop_detector_ = std::make_shared<LoopDetector>(loop_config_);
-        std::cout << "[OfflineLIVMapper] Backend PGO and loop closure enabled" << std::endl;
+        pose_graph_ = std::make_shared<PoseGraph>(pgo_options_);
+        loop_detector_ = std::make_shared<LoopDetector>(loop_options_);
+        std::cout << "[OfflineLIVMapper] Backend PGO (MIAO) and loop closure enabled" << std::endl;
     }
 #endif
 
@@ -584,17 +593,19 @@ void OfflineLIVMapper::extractKeyFrame() {
     KeyFrame kf;
     kf.id = keyframes_.size();
     kf.timestamp = lidar_measures_.measures.back().lio_time;
-    kf.r_local = state_.rot_end;
-    kf.t_local = state_.pos_end;
+    
+    // Set local pose using SE3
+    kf.pose_local = SE3(state_.rot_end, state_.pos_end);
+    
 #ifdef USE_BACKEND
     if (backend_enabled_ && pose_graph_) {
-        kf.r_global = pose_graph_->offsetR() * state_.rot_end;
-        kf.t_global = pose_graph_->offsetR() * state_.pos_end + pose_graph_->offsetT();
+        Eigen::Matrix3d r_global = pose_graph_->offsetR() * state_.rot_end;
+        Eigen::Vector3d t_global = pose_graph_->offsetR() * state_.pos_end + pose_graph_->offsetT();
+        kf.pose_global = SE3(r_global, t_global);
     } else
 #endif
     {
-        kf.r_global = state_.rot_end;
-        kf.t_global = state_.pos_end;
+        kf.pose_global = kf.pose_local;
     }
     kf.pose_covariance = state_.cov.block<6, 6>(0, 0);
 
@@ -633,7 +644,7 @@ void OfflineLIVMapper::extractKeyFrame() {
 
     std::cout << "[OfflineLIVMapper] KeyFrame #" << kf.id
               << " t=" << std::fixed << std::setprecision(3) << kf.timestamp
-              << " pos=" << kf.t_global.transpose() << std::endl;
+              << " pos=" << kf.t_global().transpose() << std::endl;
 }
 
 void OfflineLIVMapper::storePose() {
@@ -711,11 +722,39 @@ void OfflineLIVMapper::saveKeyframePoses(const std::string& path) const {
     
     file << "# id timestamp tx ty tz qx qy qz qw" << std::endl;
     file << std::fixed << std::setprecision(9);
-    
+#ifdef USE_BACKEND
+    // When backend enabled, write pure odometry chain (before PGO) so before/after differ when loops exist
+    if (backend_enabled_ && !keyframes_.empty()) {
+        // Chain: G_0 = L_0; G_i = G_{i-1} * T_{i-1,i} with T_{i-1,i} from local poses
+        Eigen::Matrix3d R_odom = keyframes_[0].r_local();
+        Eigen::Vector3d t_odom = keyframes_[0].t_local();
+        double max_diff_m = 0.0;
+        for (size_t i = 0; i < keyframes_.size(); ++i) {
+            if (i > 0) {
+                Eigen::Matrix3d dR = keyframes_[i - 1].r_local().transpose() * keyframes_[i].r_local();
+                Eigen::Vector3d dt = keyframes_[i - 1].r_local().transpose() * (keyframes_[i].t_local() - keyframes_[i - 1].t_local());
+                t_odom = R_odom * dt + t_odom;
+                R_odom = R_odom * dR;
+            }
+            Eigen::Quaterniond q(R_odom);
+            file << keyframes_[i].id << " " << keyframes_[i].timestamp << " "
+                 << t_odom.x() << " " << t_odom.y() << " " << t_odom.z() << " "
+                 << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
+                 << std::endl;
+            double diff = (keyframes_[i].t_global() - t_odom).norm();
+            if (diff > max_diff_m) max_diff_m = diff;
+        }
+        file.close();
+        std::cout << "[OfflineLIVMapper] Saved " << keyframes_.size()
+                  << " keyframe poses (before PGO, pure odom chain) to: " << path << std::endl;
+        std::cout << "[OfflineLIVMapper] Before vs After PGO max position diff: " << (max_diff_m * 1000.0) << " mm" << std::endl;
+        return;
+    }
+#endif
     for (const auto& kf : keyframes_) {
-        Eigen::Quaterniond q(kf.r_global);
+        Eigen::Quaterniond q(kf.r_global());
         file << kf.id << " " << kf.timestamp << " "
-             << kf.t_global.x() << " " << kf.t_global.y() << " " << kf.t_global.z() << " "
+             << kf.t_global().x() << " " << kf.t_global().y() << " " << kf.t_global().z() << " "
              << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
              << std::endl;
     }
@@ -724,6 +763,34 @@ void OfflineLIVMapper::saveKeyframePoses(const std::string& path) const {
     std::cout << "[OfflineLIVMapper] Saved " << keyframes_.size() 
               << " keyframe poses to: " << path << std::endl;
 }
+
+#ifdef USE_BACKEND
+size_t OfflineLIVMapper::loopClosureCount() const {
+    if (!backend_enabled_ || !loop_detector_) return 0;
+    return loop_detector_->historyPairs().size();
+}
+
+void OfflineLIVMapper::saveKeyframePosesOpt(const std::string& path) const {
+    if (!backend_enabled_) return;
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        std::cerr << "[OfflineLIVMapper] Failed to open: " << path << std::endl;
+        return;
+    }
+    file << "# id timestamp tx ty tz qx qy qz qw (after PGO)" << std::endl;
+    file << std::fixed << std::setprecision(9);
+    for (const auto& kf : keyframes_) {
+        Eigen::Quaterniond q(kf.r_global());
+        file << kf.id << " " << kf.timestamp << " "
+             << kf.t_global().x() << " " << kf.t_global().y() << " " << kf.t_global().z() << " "
+             << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
+             << std::endl;
+    }
+    file.close();
+    std::cout << "[OfflineLIVMapper] Saved " << keyframes_.size()
+              << " keyframe poses (after PGO) to: " << path << std::endl;
+}
+#endif
 
 void OfflineLIVMapper::saveKeyframeClouds(const std::string& dir) const {
     namespace fs = std::filesystem;
@@ -749,9 +816,11 @@ void OfflineLIVMapper::saveGlobalMap(const std::string& path, double resolution)
         PointCloudXYZI::Ptr world_cloud = pcl::make_shared<PointCloudXYZI>();
         
         // Transform body cloud to world frame
+        Eigen::Matrix3d r_global = kf.r_global();
+        Eigen::Vector3d t_global = kf.t_global();
         for (const auto& p_body : kf.body_cloud->points) {
             Eigen::Vector3d p(p_body.x, p_body.y, p_body.z);
-            p = kf.r_global * (ext_r_ * p + ext_t_) + kf.t_global;
+            p = r_global * (ext_r_ * p + ext_t_) + t_global;
             
             PointType p_world;
             p_world.x = static_cast<float>(p.x());
@@ -803,11 +872,10 @@ void OfflineLIVMapper::saveGlobalMap(const std::string& path, double resolution)
 #ifdef USE_BACKEND
 void OfflineLIVMapper::updateKeyframePoses() {
     if (!pose_graph_ || keyframes_.empty()) return;
-    std::vector<Eigen::Isometry3d> poses = pose_graph_->getOptimizedPoses();
+    std::vector<SE3> poses = pose_graph_->getOptimizedPoses();
     if (poses.size() != keyframes_.size()) return;
     for (size_t i = 0; i < keyframes_.size(); ++i) {
-        keyframes_[i].r_global = poses[i].linear();
-        keyframes_[i].t_global = poses[i].translation();
+        keyframes_[i].pose_global = poses[i];
     }
 }
 

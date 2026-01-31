@@ -11,6 +11,7 @@ which is included as part of this source code package.
 */
 
 #include "preprocess.h"
+#include "utils/color.h"
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
@@ -99,7 +100,7 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::ConstShar
   pl_full.clear();
   // double t1 = omp_get_wtime();
   int plsize = msg->point_num;
-  printf("[ Preprocess ] Input point number: %d \n", plsize);
+  const int input_num = plsize;
   // printf("point_filter_num: %d\n", point_filter_num);
 
   pl_corn.reserve(plsize);
@@ -197,7 +198,8 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::ConstShar
       }
     }
   }
-  printf("[ Preprocess ] Output point number: %zu \n", pl_surf.points.size());
+  printf(GREEN "[ Preprocess ] Input: %d -> Output: %zu \n" RESET,
+         input_num, pl_surf.points.size());
 }
 
 void Preprocess::l515_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)

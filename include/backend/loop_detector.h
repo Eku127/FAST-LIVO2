@@ -1,6 +1,7 @@
 /*
  * GICP-based loop closure detection using small_gicp
  * Replaces PCL ICP with small_gicp for better stability and performance.
+ * Design follows the Options pattern for consistent API with PoseGraph.
  */
 
 #ifndef BACKEND_LOOP_DETECTOR_H
@@ -27,20 +28,33 @@ namespace livo2_offline {
  */
 class LoopDetector {
 public:
-    struct Config {
-        double search_radius = 15.0;
-        double time_threshold = 60.0;
-        double fitness_threshold = 0.15;
-        int submap_half_range = 3;
-        double submap_resolution = 0.12;
-        double min_detect_interval = 10.0;
-        int gicp_max_iterations = 50;
-        double gicp_max_correspondence_dist = 10.0;
-        int gicp_num_threads = 4;
-        int gicp_correspondence_randomness = 20;
+    /**
+     * @brief Configuration options for LoopDetector
+     * Follows the Options pattern for consistent API with PoseGraph
+     */
+    struct Options {
+        // General settings
+        bool verbose{false};
+        
+        // Candidate search parameters
+        double search_radius{15.0};         // meters, radius to search for candidates
+        double time_threshold{60.0};        // seconds, minimum time gap for loop candidates
+        double min_detect_interval{10.0};   // seconds, minimum interval between detections
+        
+        // Submap building parameters
+        int submap_half_range{3};           // keyframes on each side of candidate
+        double submap_resolution{0.12};     // meters, voxel size for downsampling
+        
+        // GICP parameters
+        double fitness_threshold{0.15};     // maximum fitness score to accept loop
+        int gicp_max_iterations{50};
+        double gicp_max_correspondence_dist{10.0};
+        int gicp_num_threads{4};
+        int gicp_correspondence_randomness{20};
     };
 
-    explicit LoopDetector(const Config& config);
+    LoopDetector();
+    explicit LoopDetector(const Options& options);
 
     /**
      * @brief Search for loop closure for the current keyframe
@@ -58,9 +72,14 @@ public:
     const std::vector<std::pair<size_t, size_t>>& historyPairs() const {
         return history_pairs_;
     }
+    
+    /**
+     * @brief Get current options
+     */
+    const Options& options() const { return options_; }
 
 private:
-    Config config_;
+    Options options_;
     std::vector<std::pair<size_t, size_t>> history_pairs_;
     double last_detect_time_ = 0.0;
 

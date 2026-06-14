@@ -69,6 +69,7 @@
       gravity_align_en: false
 
     publish:
+      world_frame_id: "map"
       dense_map_en: false
       pub_effect_point_en: false
       pub_plane_en: false

@@ -42,6 +42,7 @@ public:
   void appendMapInitializationFrame();
   bool runMapInitialization();
   void loadMapInitializationTarget();
+  void publishMapInitializationTarget();
   Eigen::Matrix4d mapInitializationInitialGuess() const;
   void applyMapInitializationTransform(const Eigen::Matrix4d &map_T_local);
   
@@ -89,8 +90,10 @@ public:
   bool lidar_map_inited = false, pcd_save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
   int pcd_save_interval = -1, pcd_save_type = 0;
   int pub_scan_num = 1;
+  string world_frame_id = "camera_init";
 
   bool map_init_enabled = false, map_init_done = false, map_init_failed = false;
+  bool map_init_map_published = false;
   bool map_init_yaw_search_en = true;
   int map_init_accumulate_frames = 5, map_init_max_frames = 20, map_init_frame_count = 0;
   int map_init_min_points = 800, map_init_ndt_max_iterations = 40;
@@ -166,6 +169,7 @@ public:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pubNormal;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubMapInitCloud;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudDyn;

@@ -54,7 +54,7 @@ LIVMapper::LIVMapper()
   initializeFiles();
   initializeComponents();
   path.header.stamp = this->now();
-  path.header.frame_id = "camera_init";
+  path.header.frame_id = world_frame_id;
 }
 
 LIVMapper::~LIVMapper() {}
@@ -112,6 +112,7 @@ void LIVMapper::readParameters()
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_T", std::vector<double>());
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_R", std::vector<double>());
   this->declare_parameter<int>("publish.pub_scan_num", 1);
+  this->declare_parameter<std::string>("publish.world_frame_id", "camera_init");
   this->declare_parameter<bool>("publish.pub_effect_point_en", false);
   this->declare_parameter<bool>("publish.dense_map_en", false);
 
@@ -166,6 +167,7 @@ void LIVMapper::readParameters()
   this->get_parameter("extrin_calib.extrinsic_T", extrinT);
   this->get_parameter("extrin_calib.extrinsic_R", extrinR);
   this->get_parameter("publish.pub_scan_num", pub_scan_num);
+  this->get_parameter("publish.world_frame_id", world_frame_id);
   this->get_parameter("publish.pub_effect_point_en", pub_effect_point_en);
   this->get_parameter("publish.dense_map_en", dense_map_en);
 
@@ -241,6 +243,8 @@ void LIVMapper::initializeSubscribersAndPublishers()
   pubNormal = this->create_publisher<visualization_msgs::msg::MarkerArray>("visualization_marker", 100);
   pubLaserCloudEffect = this->create_publisher<sensor_msgs::msg::PointCloud2>("/cloud_effected", 100);
   pubLaserCloudMap = this->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 100);
+  auto map_init_qos = rclcpp::QoS(1).transient_local().reliable();
+  pubMapInitCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/map_init_cloud", map_init_qos);
   pubOdomAftMapped = this->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init", 10);
   pubPath = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
   plane_pub = this->create_publisher<visualization_msgs::msg::Marker>("/planner_normal", 1);
@@ -253,6 +257,8 @@ void LIVMapper::initializeSubscribersAndPublishers()
   imu_prop_timer = this->create_wall_timer(
     std::chrono::milliseconds(4), std::bind(&LIVMapper::imu_prop_callback, this));
   voxelmap_manager->voxel_map_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/planes", 10000);
+
+  if (map_init_enabled) publishMapInitializationTarget();
 }
 
 void LIVMapper::handleFirstFrame() 
@@ -333,6 +339,18 @@ void LIVMapper::loadMapInitializationTarget()
   RCLCPP_INFO(this->get_logger(),
               "[ MapInit ] loaded target map: %s raw=%zu filtered=%zu",
               map_init_map_path.c_str(), raw_map->size(), map_init_target_cloud->size());
+}
+
+void LIVMapper::publishMapInitializationTarget()
+{
+  if (!pubMapInitCloud || !map_init_target_cloud || map_init_target_cloud->empty()) return;
+
+  sensor_msgs::msg::PointCloud2 map_msg;
+  pcl::toROSMsg(*map_init_target_cloud, map_msg);
+  map_msg.header.stamp = this->now();
+  map_msg.header.frame_id = world_frame_id;
+  pubMapInitCloud->publish(map_msg);
+  map_init_map_published = true;
 }
 
 Eigen::Matrix4d LIVMapper::mapInitializationInitialGuess() const
@@ -813,7 +831,7 @@ void LIVMapper::imu_prop_callback()
     posi = imu_propagate.pos_end;
     vel_i = imu_propagate.vel_end;
     q = Eigen::Quaterniond(imu_propagate.rot_end);
-    imu_prop_odom.header.frame_id = "world";
+    imu_prop_odom.header.frame_id = world_frame_id;
     imu_prop_odom.header.stamp = newest_imu.header.stamp;
     imu_prop_odom.pose.pose.position.x = posi.x();
     imu_prop_odom.pose.pose.position.y = posi.y();
@@ -1118,7 +1136,7 @@ void LIVMapper::publish_frame_world()
   sensor_msgs::msg::PointCloud2 laserCloudmsg;
   pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg); 
   laserCloudmsg.header.stamp = this->now();
-  laserCloudmsg.header.frame_id = "camera_init";
+  laserCloudmsg.header.frame_id = world_frame_id;
   pubLaserCloudFullRes->publish(laserCloudmsg);
 
   /**************** save map ****************/
@@ -1204,7 +1222,7 @@ void LIVMapper::publish_effect_world(const std::vector<PointToPlane> &ptpl_list)
   sensor_msgs::msg::PointCloud2 laserCloudFullRes3;
   pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
   laserCloudFullRes3.header.stamp = this->now();
-  laserCloudFullRes3.header.frame_id = "camera_init";
+  laserCloudFullRes3.header.frame_id = world_frame_id;
   pubLaserCloudEffect->publish(laserCloudFullRes3);
 }
 
@@ -1221,7 +1239,7 @@ template <typename T> void LIVMapper::set_posestamp(T &out)
 
 void LIVMapper::publish_odometry()
 {
-  odomAftMapped.header.frame_id = "camera_init";
+  odomAftMapped.header.frame_id = world_frame_id;
   odomAftMapped.child_frame_id = "aft_mapped";
   odomAftMapped.header.stamp = this->now();
   set_posestamp(odomAftMapped.pose.pose);
@@ -1229,7 +1247,7 @@ void LIVMapper::publish_odometry()
   static tf2_ros::TransformBroadcaster br(shared_from_this());
   geometry_msgs::msg::TransformStamped transform;
   transform.header.stamp = odomAftMapped.header.stamp;
-  transform.header.frame_id = "camera_init";
+  transform.header.frame_id = world_frame_id;
   transform.child_frame_id = "aft_mapped";
   transform.transform.translation.x = _state.pos_end(0);
   transform.transform.translation.y = _state.pos_end(1);
@@ -1245,7 +1263,7 @@ void LIVMapper::publish_odometry()
 void LIVMapper::publish_mavros()
 {
   msg_body_pose.header.stamp = this->now();
-  msg_body_pose.header.frame_id = "camera_init";
+  msg_body_pose.header.frame_id = world_frame_id;
   set_posestamp(msg_body_pose.pose);
   mavros_pose_publisher->publish(msg_body_pose);
 }
@@ -1254,7 +1272,7 @@ void LIVMapper::publish_path()
 {
   set_posestamp(msg_body_pose.pose);
   msg_body_pose.header.stamp = this->now();
-  msg_body_pose.header.frame_id = "camera_init";
+  msg_body_pose.header.frame_id = world_frame_id;
   path.poses.push_back(msg_body_pose);
   pubPath->publish(path);
 }

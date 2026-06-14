@@ -38,6 +38,12 @@ public:
   void handleLIO();
   void savePCD();
   void processImu();
+  bool mapInitializationGate();
+  void appendMapInitializationFrame();
+  bool runMapInitialization();
+  void loadMapInitializationTarget();
+  Eigen::Matrix4d mapInitializationInitialGuess() const;
+  void applyMapInitializationTransform(const Eigen::Matrix4d &map_T_local);
   
   bool sync_packages(LidarMeasureGroup &meas);
   void prop_imu_once(StatesGroup &imu_prop_state, const double dt, V3D acc_avr, V3D angvel_avr);
@@ -83,6 +89,19 @@ public:
   bool lidar_map_inited = false, pcd_save_en = false, pub_effect_point_en = false, pose_output_en = false, ros_driver_fix_en = false, hilti_en = false;
   int pcd_save_interval = -1, pcd_save_type = 0;
   int pub_scan_num = 1;
+
+  bool map_init_enabled = false, map_init_done = false, map_init_failed = false;
+  bool map_init_yaw_search_en = true;
+  int map_init_accumulate_frames = 5, map_init_max_frames = 20, map_init_frame_count = 0;
+  int map_init_min_points = 800, map_init_ndt_max_iterations = 40;
+  double map_init_submap_leaf_size = 0.25, map_init_map_leaf_size = 0.35;
+  double map_init_ndt_resolution = 1.0, map_init_ndt_step_size = 0.1, map_init_ndt_trans_eps = 0.01;
+  double map_init_fitness_score_threshold = 2.0;
+  double map_init_yaw_search_range_deg = 180.0, map_init_yaw_search_step_deg = 30.0;
+  std::vector<double> map_init_initial_pose;
+  string map_init_map_path;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr map_init_target_cloud;
+  pcl::PointCloud<pcl::PointXYZI>::Ptr map_init_submap_cloud;
 
   StatesGroup imu_propagate, latest_ekf_state;
 

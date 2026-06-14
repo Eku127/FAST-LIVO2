@@ -12,8 +12,15 @@ which is included as part of this source code package.
 
 #include "LIVMapper.h"
 #include <pcl/common/io.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/registration/ndt.h>
 #include <rclcpp/rclcpp.hpp>
 #include <pcl_conversions/pcl_conversions.h>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -40,6 +47,8 @@ LIVMapper::LIVMapper()
   pcl_wait_pub.reset(new PointCloudXYZI());
   pcl_wait_save.reset(new PointCloudXYZI());
   pcl_wait_save_intensity.reset(new PointCloudXYZI());
+  map_init_target_cloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
+  map_init_submap_cloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
   voxelmap_manager.reset(new VoxelMapManager(voxel_config, voxel_map));
   root_dir = ROOT_DIR;
   initializeFiles();
@@ -84,6 +93,22 @@ void LIVMapper::readParameters()
 
   this->declare_parameter<bool>("pcd_save.colmap_output_en", false);
   this->declare_parameter<double>("pcd_save.filter_size_pcd", 0.5);
+  this->declare_parameter<bool>("map_init.enabled", false);
+  this->declare_parameter<std::string>("map_init.map_path", "");
+  this->declare_parameter<int>("map_init.accumulate_frames", 5);
+  this->declare_parameter<int>("map_init.max_frames", 20);
+  this->declare_parameter<int>("map_init.min_points", 800);
+  this->declare_parameter<double>("map_init.submap_leaf_size", 0.25);
+  this->declare_parameter<double>("map_init.map_leaf_size", 0.35);
+  this->declare_parameter<double>("map_init.ndt_resolution", 1.0);
+  this->declare_parameter<double>("map_init.ndt_step_size", 0.1);
+  this->declare_parameter<double>("map_init.ndt_trans_eps", 0.01);
+  this->declare_parameter<int>("map_init.ndt_max_iterations", 40);
+  this->declare_parameter<double>("map_init.fitness_score_threshold", 2.0);
+  this->declare_parameter<bool>("map_init.yaw_search_enabled", true);
+  this->declare_parameter<double>("map_init.yaw_search_range_deg", 180.0);
+  this->declare_parameter<double>("map_init.yaw_search_step_deg", 30.0);
+  this->declare_parameter<std::vector<double>>("map_init.initial_pose", std::vector<double>({0.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_T", std::vector<double>());
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_R", std::vector<double>());
   this->declare_parameter<int>("publish.pub_scan_num", 1);
@@ -122,6 +147,22 @@ void LIVMapper::readParameters()
 
   this->get_parameter("pcd_save.colmap_output_en", colmap_output_en);
   this->get_parameter("pcd_save.filter_size_pcd", filter_size_pcd);
+  this->get_parameter("map_init.enabled", map_init_enabled);
+  this->get_parameter("map_init.map_path", map_init_map_path);
+  this->get_parameter("map_init.accumulate_frames", map_init_accumulate_frames);
+  this->get_parameter("map_init.max_frames", map_init_max_frames);
+  this->get_parameter("map_init.min_points", map_init_min_points);
+  this->get_parameter("map_init.submap_leaf_size", map_init_submap_leaf_size);
+  this->get_parameter("map_init.map_leaf_size", map_init_map_leaf_size);
+  this->get_parameter("map_init.ndt_resolution", map_init_ndt_resolution);
+  this->get_parameter("map_init.ndt_step_size", map_init_ndt_step_size);
+  this->get_parameter("map_init.ndt_trans_eps", map_init_ndt_trans_eps);
+  this->get_parameter("map_init.ndt_max_iterations", map_init_ndt_max_iterations);
+  this->get_parameter("map_init.fitness_score_threshold", map_init_fitness_score_threshold);
+  this->get_parameter("map_init.yaw_search_enabled", map_init_yaw_search_en);
+  this->get_parameter("map_init.yaw_search_range_deg", map_init_yaw_search_range_deg);
+  this->get_parameter("map_init.yaw_search_step_deg", map_init_yaw_search_step_deg);
+  this->get_parameter("map_init.initial_pose", map_init_initial_pose);
   this->get_parameter("extrin_calib.extrinsic_T", extrinT);
   this->get_parameter("extrin_calib.extrinsic_R", extrinR);
   this->get_parameter("publish.pub_scan_num", pub_scan_num);
@@ -150,6 +191,8 @@ void LIVMapper::initializeComponents()
   if (!imu_en) p_imu->disable_imu();
   if (!gravity_est_en) p_imu->disable_gravity_est();
   if (!ba_bg_est_en) p_imu->disable_bias_est();
+
+  if (map_init_enabled) loadMapInitializationTarget();
 
   slam_mode_ = imu_en ? ONLY_LIO : ONLY_LO;
 }
@@ -258,6 +301,222 @@ void LIVMapper::processImu()
   // std::cout << "[ Mapping ] feats_undistort: " << feats_undistort->size() << std::endl;
   // std::cout << "[ Mapping ] predict cov: " << _state.cov.diagonal().transpose() << std::endl;
   // std::cout << "[ Mapping ] predict sta: " << state_propagat.pos_end.transpose() << state_propagat.vel_end.transpose() << std::endl;
+}
+
+void LIVMapper::loadMapInitializationTarget()
+{
+  if (map_init_map_path.empty())
+  {
+    throw std::runtime_error("map_init.enabled is true but map_init.map_path is empty");
+  }
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr raw_map(new pcl::PointCloud<pcl::PointXYZI>());
+  if (pcl::io::loadPCDFile(map_init_map_path, *raw_map) != 0 || raw_map->empty())
+  {
+    throw std::runtime_error("failed to load map_init.map_path: " + map_init_map_path);
+  }
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr filtered_map(new pcl::PointCloud<pcl::PointXYZI>());
+  if (map_init_map_leaf_size > 0.0)
+  {
+    pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
+    voxel_filter.setInputCloud(raw_map);
+    voxel_filter.setLeafSize(map_init_map_leaf_size, map_init_map_leaf_size, map_init_map_leaf_size);
+    voxel_filter.filter(*filtered_map);
+  }
+  else
+  {
+    *filtered_map = *raw_map;
+  }
+
+  map_init_target_cloud = filtered_map;
+  RCLCPP_INFO(this->get_logger(),
+              "[ MapInit ] loaded target map: %s raw=%zu filtered=%zu",
+              map_init_map_path.c_str(), raw_map->size(), map_init_target_cloud->size());
+}
+
+Eigen::Matrix4d LIVMapper::mapInitializationInitialGuess() const
+{
+  std::vector<double> pose = map_init_initial_pose;
+  if (pose.size() != 6) pose = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+  Eigen::AngleAxisd roll_angle(pose[3], Eigen::Vector3d::UnitX());
+  Eigen::AngleAxisd pitch_angle(pose[4], Eigen::Vector3d::UnitY());
+  Eigen::AngleAxisd yaw_angle(pose[5], Eigen::Vector3d::UnitZ());
+
+  Eigen::Matrix4d guess = Eigen::Matrix4d::Identity();
+  guess.block<3, 3>(0, 0) = (yaw_angle * pitch_angle * roll_angle).toRotationMatrix();
+  guess.block<3, 1>(0, 3) = Eigen::Vector3d(pose[0], pose[1], pose[2]);
+  return guess;
+}
+
+void LIVMapper::appendMapInitializationFrame()
+{
+  if (!feats_undistort || feats_undistort->empty()) return;
+
+  PointCloudXYZI::Ptr local_frame(new PointCloudXYZI());
+  transformLidar(_state.rot_end, _state.pos_end, feats_undistort, local_frame);
+  map_init_submap_cloud->reserve(map_init_submap_cloud->size() + local_frame->size());
+
+  for (const auto &point : local_frame->points)
+  {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) continue;
+    pcl::PointXYZI out_point;
+    out_point.x = point.x;
+    out_point.y = point.y;
+    out_point.z = point.z;
+    out_point.intensity = point.intensity;
+    map_init_submap_cloud->push_back(out_point);
+  }
+
+  map_init_frame_count++;
+  RCLCPP_INFO(this->get_logger(),
+              "[ MapInit ] accumulated frame %d/%d, submap points=%zu",
+              map_init_frame_count, map_init_accumulate_frames, map_init_submap_cloud->size());
+}
+
+bool LIVMapper::runMapInitialization()
+{
+  pcl::PointCloud<pcl::PointXYZI>::Ptr source_cloud(new pcl::PointCloud<pcl::PointXYZI>());
+  if (map_init_submap_leaf_size > 0.0)
+  {
+    pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
+    voxel_filter.setInputCloud(map_init_submap_cloud);
+    voxel_filter.setLeafSize(map_init_submap_leaf_size, map_init_submap_leaf_size, map_init_submap_leaf_size);
+    voxel_filter.filter(*source_cloud);
+  }
+  else
+  {
+    *source_cloud = *map_init_submap_cloud;
+  }
+
+  if (static_cast<int>(source_cloud->size()) < map_init_min_points)
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "[ MapInit ] source submap has only %zu points, need at least %d",
+                source_cloud->size(), map_init_min_points);
+    return false;
+  }
+
+  // PCL 1.12 on Humble can crash in the NDT destructor after repeated align()
+  // calls. Map initialization is one-shot, so keep the NDT object alive for the
+  // process lifetime instead of destroying it at the end of this function.
+  static auto *ndt = new pcl::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI>();
+  ndt->setTransformationEpsilon(map_init_ndt_trans_eps);
+  ndt->setStepSize(map_init_ndt_step_size);
+  ndt->setResolution(map_init_ndt_resolution);
+  ndt->setMaximumIterations(map_init_ndt_max_iterations);
+  ndt->setInputTarget(map_init_target_cloud);
+  ndt->setInputSource(source_cloud);
+
+  Eigen::Matrix4d initial_guess = mapInitializationInitialGuess();
+  Eigen::Matrix4d best_transform = Eigen::Matrix4d::Identity();
+  double best_score = std::numeric_limits<double>::max();
+  bool best_converged = false;
+
+  const double deg_to_rad = M_PI / 180.0;
+  const double yaw_range = map_init_yaw_search_en ? map_init_yaw_search_range_deg : 0.0;
+  const double yaw_step = std::max(1.0, map_init_yaw_search_step_deg);
+  const int yaw_steps = static_cast<int>(std::floor(yaw_range / yaw_step));
+
+  for (int yaw_index = -yaw_steps; yaw_index <= yaw_steps; ++yaw_index)
+  {
+    const double yaw = static_cast<double>(yaw_index) * yaw_step * deg_to_rad;
+    Eigen::Matrix4d yaw_guess = Eigen::Matrix4d::Identity();
+    yaw_guess.block<3, 3>(0, 0) = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    Eigen::Matrix4f guess = (initial_guess * yaw_guess).cast<float>();
+
+    pcl::PointCloud<pcl::PointXYZI> aligned_cloud;
+    ndt->align(aligned_cloud, guess);
+
+    const bool converged = ndt->hasConverged();
+    const double score = ndt->getFitnessScore();
+    RCLCPP_INFO(this->get_logger(),
+                "[ MapInit ] yaw %.1f deg converged=%d score=%.6f",
+                yaw / deg_to_rad, converged ? 1 : 0, score);
+
+    if (converged && score < best_score)
+    {
+      best_score = score;
+      best_converged = true;
+      best_transform = ndt->getFinalTransformation().cast<double>();
+    }
+  }
+
+  if (!best_converged)
+  {
+    RCLCPP_WARN(this->get_logger(), "[ MapInit ] NDT did not converge for any initial yaw");
+    return false;
+  }
+
+  if (best_score > map_init_fitness_score_threshold)
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "[ MapInit ] best score %.6f is above threshold %.6f",
+                best_score, map_init_fitness_score_threshold);
+    return false;
+  }
+
+  applyMapInitializationTransform(best_transform);
+  RCLCPP_INFO(this->get_logger(),
+              "[ MapInit ] success score=%.6f pose=(%.4f, %.4f, %.4f)",
+              best_score, _state.pos_end.x(), _state.pos_end.y(), _state.pos_end.z());
+  return true;
+}
+
+void LIVMapper::applyMapInitializationTransform(const Eigen::Matrix4d &map_T_local)
+{
+  const M3D local_R_current = _state.rot_end;
+  const V3D local_t_current = _state.pos_end;
+  const M3D map_R_local = map_T_local.block<3, 3>(0, 0);
+  const V3D map_t_local = map_T_local.block<3, 1>(0, 3);
+
+  _state.rot_end = map_R_local * local_R_current;
+  _state.pos_end = map_R_local * local_t_current + map_t_local;
+  _state.vel_end = map_R_local * _state.vel_end;
+  _state.gravity = map_R_local * _state.gravity;
+
+  state_propagat = _state;
+  voxelmap_manager->state_ = _state;
+  latest_ekf_state = _state;
+  imu_propagate = _state;
+}
+
+bool LIVMapper::mapInitializationGate()
+{
+  if (!map_init_enabled || map_init_done) return true;
+  if (map_init_failed) return false;
+
+  if (imu_en && p_imu->imu_need_init)
+  {
+    RCLCPP_INFO(this->get_logger(), "[ MapInit ] waiting for IMU initialization");
+    return false;
+  }
+
+  appendMapInitializationFrame();
+
+  if (map_init_frame_count < map_init_accumulate_frames ||
+      static_cast<int>(map_init_submap_cloud->size()) < map_init_min_points)
+  {
+    return false;
+  }
+
+  if (runMapInitialization())
+  {
+    map_init_done = true;
+    return true;
+  }
+
+  if (map_init_frame_count >= map_init_max_frames)
+  {
+    map_init_failed = true;
+    RCLCPP_FATAL(this->get_logger(),
+                 "[ MapInit ] failed after %d accumulated frames; shutting down",
+                 map_init_frame_count);
+    rclcpp::shutdown();
+  }
+
+  return false;
 }
 
 void LIVMapper::stateEstimationAndMapping() 
@@ -477,6 +736,11 @@ void LIVMapper::run()
     handleFirstFrame();
 
     processImu();
+    if (!mapInitializationGate())
+    {
+      rate.sleep();
+      continue;
+    }
 
     // if (!p_imu->imu_time_init) continue;
 

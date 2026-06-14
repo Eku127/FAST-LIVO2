@@ -104,6 +104,37 @@ roslaunch fast_livo mapping_avia.launch
 rosbag play YOUR_DOWNLOADED.bag
 ```
 
+## Robot demo map initialization mode
+
+This fork adds an optional LiDAR-map initialization mode for the Astribot front
+Livox workflow. When `map_init.enabled` is true, FAST-LIVO2 first accumulates a
+short local LiDAR submap, aligns that submap to an existing PCD map with PCL NDT,
+and then uses the resulting pose as the initial FAST-LIVO2 state before normal
+LIO mapping starts.
+
+The front-LiDAR map-init config is:
+
+```text
+config/front_map_lio.yaml
+```
+
+It defaults to:
+
+```text
+map_init.map_path: /home/hetao/workspace/robot_demo_infra/scripts/lidar/lidar_map/downsample_map.pcd
+common.lid_topic: /livox/lidar_front
+common.imu_topic: /livox/imu_front
+preprocess.lidar_type: 8
+```
+
+Run it through the repository helper:
+
+```bash
+scripts/lidar/start_fast_livo_front_map_lio.sh
+```
+
+No extra third-party package is required beyond the existing PCL dependency.
+
 
 ## 5. License
 

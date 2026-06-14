@@ -43,6 +43,9 @@ public:
   bool runMapInitialization();
   void loadMapInitializationTarget();
   void publishMapInitializationTarget();
+  Eigen::Matrix4d projectMapInitializationTransform(const Eigen::Matrix4d &map_T_local) const;
+  Eigen::Matrix4d selectMapInitializationTransform(
+    double &selected_score, double &max_xy_spread, double &max_yaw_spread) const;
   Eigen::Matrix4d mapInitializationInitialGuess() const;
   void applyMapInitializationTransform(const Eigen::Matrix4d &map_T_local);
   
@@ -95,16 +98,26 @@ public:
   bool map_init_enabled = false, map_init_done = false, map_init_failed = false;
   bool map_init_map_published = false;
   bool map_init_yaw_search_en = true;
+  bool map_init_planar_en = true;
+  bool map_init_body_frame_source = false;
+  bool map_init_zero_velocity = false;
+  int map_init_score_fail_count = 0, map_init_max_score_failures = 3;
+  int map_init_warmup_frames = 5, map_init_warmup_count = 0;
   int map_init_accumulate_frames = 5, map_init_max_frames = 20, map_init_frame_count = 0;
   int map_init_min_points = 800, map_init_ndt_max_iterations = 40;
+  int map_init_result_samples = 1, map_init_discard_worst_count = 0;
   double map_init_submap_leaf_size = 0.25, map_init_map_leaf_size = 0.35;
   double map_init_ndt_resolution = 1.0, map_init_ndt_step_size = 0.1, map_init_ndt_trans_eps = 0.01;
   double map_init_fitness_score_threshold = 2.0;
+  double map_init_max_sync_delta = 0.25;
+  double map_init_max_xy_spread = 0.2, map_init_max_yaw_spread_deg = 5.0;
   double map_init_yaw_search_range_deg = 180.0, map_init_yaw_search_step_deg = 30.0;
   std::vector<double> map_init_initial_pose;
   string map_init_map_path;
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_init_target_cloud;
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_init_submap_cloud;
+  std::vector<Eigen::Matrix4d> map_init_candidate_transforms;
+  std::vector<double> map_init_candidate_scores;
 
   StatesGroup imu_propagate, latest_ekf_state;
 

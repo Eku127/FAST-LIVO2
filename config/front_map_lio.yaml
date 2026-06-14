@@ -35,18 +35,28 @@
       enabled: true
       map_path: "/home/hetao/workspace/robot_demo_infra/scripts/lidar/lidar_map/downsample_map.pcd"
       accumulate_frames: 8
-      max_frames: 30
+      max_frames: 40
       min_points: 3000
-      submap_leaf_size: 0.25
-      map_leaf_size: 0.35
-      ndt_resolution: 1.0
-      ndt_step_size: 0.1
-      ndt_trans_eps: 0.01
-      ndt_max_iterations: 40
-      fitness_score_threshold: 2.0
+      submap_leaf_size: 0.2
+      map_leaf_size: 0.2
+      ndt_resolution: 0.7
+      ndt_step_size: 0.08
+      ndt_trans_eps: 0.005
+      ndt_max_iterations: 50
+      fitness_score_threshold: 1.0
       yaw_search_enabled: true
       yaw_search_range_deg: 180.0
       yaw_search_step_deg: 30.0
+      planar_enabled: true
+      body_frame_source: true
+      zero_velocity: true
+      result_samples: 7
+      discard_worst_count: 3
+      max_score_failures: 3
+      warmup_frames: 15
+      max_sync_delta: 0.25
+      max_xy_spread: 0.15
+      max_yaw_spread_deg: 3.0
       initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     lio:

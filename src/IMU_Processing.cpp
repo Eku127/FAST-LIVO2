@@ -27,6 +27,8 @@ ImuProcess::ImuProcess() : imu_need_init(true), Eye3d(M3D::Identity()),
   mean_gyr = V3D(0, 0, 0);
   angvel_last = Zero3d;
   acc_s_last = Zero3d;
+  last_prop_end_time = 0.0;
+  time_last_scan = 0.0;
   Lid_offset_to_IMU = Zero3d;
   Lid_rot_to_IMU = Eye3d;
   last_imu.reset(new sensor_msgs::msg::Imu());
@@ -41,6 +43,9 @@ void ImuProcess::Reset()
   mean_acc = V3D(0, 0, -1.0);
   mean_gyr = V3D(0, 0, 0);
   angvel_last = Zero3d;
+  acc_s_last = Zero3d;
+  last_prop_end_time = 0.0;
+  time_last_scan = 0.0;
   imu_need_init = true;
   init_iter_num = 1;
   IMUpose.clear();
@@ -567,6 +572,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
     imu_need_init = true;
 
     last_imu = meas.imu.back();
+    last_prop_end_time = meas.lio_time;
 
     if (init_iter_num > MAX_INI_COUNT)
     {

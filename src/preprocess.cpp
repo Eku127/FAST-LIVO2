@@ -85,6 +85,10 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
     robosense_handler(msg);
     break;
 
+  case LIVOX_POINTCLOUD2:
+    livox_pointcloud2_handler(msg);
+    break;
+
   default:
     printf("Error LiDAR Type: %d \n", lidar_type);
     break;
@@ -741,6 +745,104 @@ void Preprocess::robosense_handler(const sensor_msgs::msg::PointCloud2::ConstSha
   std::sort(pl_surf.points.begin(), pl_surf.points.end(), [](const PointType &a, const PointType &b) {
     return a.curvature < b.curvature;
   });
+}
+
+void Preprocess::livox_pointcloud2_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+{
+  pl_surf.clear();
+  pl_corn.clear();
+  pl_full.clear();
+
+  pcl::PointCloud<livox_ros2::Point> pl_orig;
+  pcl::fromROSMsg(*msg, pl_orig);
+  const int plsize = pl_orig.points.size();
+  if (plsize == 0) return;
+
+  pl_surf.reserve(plsize);
+  pl_full.resize(plsize);
+
+  for (int i = 0; i < N_SCANS; i++)
+  {
+    pl_buff[i].clear();
+    pl_buff[i].reserve(plsize);
+  }
+
+  const double time_head = pl_orig.points.front().timestamp;
+  uint valid_num = 0;
+
+  if (feature_enabled)
+  {
+    for (int i = 0; i < plsize; i++)
+    {
+      const auto &src = pl_orig.points[i];
+      if (src.line >= N_SCANS) continue;
+
+      PointType added_pt;
+      added_pt.x = src.x;
+      added_pt.y = src.y;
+      added_pt.z = src.z;
+      added_pt.intensity = src.intensity;
+      added_pt.normal_x = 0;
+      added_pt.normal_y = 0;
+      added_pt.normal_z = 0;
+      added_pt.curvature = (src.timestamp - time_head) / 1e6; // ns -> ms
+
+      if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z >= blind_sqr)
+      {
+        pl_buff[src.line].push_back(added_pt);
+      }
+    }
+
+    for (int j = 0; j < N_SCANS; j++)
+    {
+      PointCloudXYZI &pl = pl_buff[j];
+      int linesize = pl.size();
+      if (linesize < 2) continue;
+      vector<orgtype> &types = typess[j];
+      types.clear();
+      types.resize(linesize);
+      linesize--;
+      for (uint i = 0; i < static_cast<uint>(linesize); i++)
+      {
+        types[i].range = sqrt(pl[i].x * pl[i].x + pl[i].y * pl[i].y);
+        vx = pl[i].x - pl[i + 1].x;
+        vy = pl[i].y - pl[i + 1].y;
+        vz = pl[i].z - pl[i + 1].z;
+        types[i].dista = vx * vx + vy * vy + vz * vz;
+      }
+      types[linesize].range = sqrt(pl[linesize].x * pl[linesize].x + pl[linesize].y * pl[linesize].y);
+      give_feature(pl, types);
+    }
+  }
+  else
+  {
+    for (int i = 0; i < plsize; i++)
+    {
+      const auto &src = pl_orig.points[i];
+      if (src.line >= N_SCANS) continue;
+
+      valid_num++;
+      if (valid_num % point_filter_num != 0) continue;
+
+      PointType added_pt;
+      added_pt.x = src.x;
+      added_pt.y = src.y;
+      added_pt.z = src.z;
+      added_pt.intensity = src.intensity;
+      added_pt.normal_x = 0;
+      added_pt.normal_y = 0;
+      added_pt.normal_z = 0;
+      added_pt.curvature = (src.timestamp - time_head) / 1e6; // ns -> ms
+
+      if (added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z >= blind_sqr)
+      {
+        pl_surf.points.push_back(added_pt);
+      }
+    }
+  }
+
+  printf("[ Preprocess ] Livox PointCloud2 input point number: %d \n", plsize);
+  printf("[ Preprocess ] Livox PointCloud2 output point number: %zu \n", pl_surf.points.size());
 }
 
 void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &types)

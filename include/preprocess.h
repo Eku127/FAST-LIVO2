@@ -81,6 +81,24 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(velodyne_ros::Point,
                                   (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(float, time, time)(std::uint16_t, ring, ring))
 /****************/
 
+/*** Livox ROS2 PointCloud2 PointXYZRTLT ***/
+namespace livox_ros2
+{
+struct EIGEN_ALIGN16 Point
+{
+  PCL_ADD_POINT4D;
+  float intensity;
+  std::uint8_t tag;
+  std::uint8_t line;
+  double timestamp;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+} // namespace livox_ros2
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros2::Point,
+                                  (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)
+                                  (std::uint8_t, tag, tag)(std::uint8_t, line, line)(double, timestamp, timestamp))
+/****************/
+
 /*** Ouster ***/
 namespace ouster_ros
 {
@@ -178,6 +196,7 @@ private:
   void xt32_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void Pandar128_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void robosense_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+  void livox_pointcloud2_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void l515_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);
   void pub_func(PointCloudXYZI &pl, const rclcpp::Time &ct);

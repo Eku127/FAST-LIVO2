@@ -50,14 +50,19 @@
       planar_enabled: true
       body_frame_source: true
       zero_velocity: true
+      prior_enabled: true
+      prior_xy_radius: 0.04
+      prior_yaw_range_deg: 3.0
+      prior_score_weight: 0.2
       result_samples: 7
+      settle_samples: 3
       discard_worst_count: 3
-      max_score_failures: 3
+      max_score_failures: 5
       warmup_frames: 15
       max_sync_delta: 0.25
-      max_xy_spread: 0.15
-      max_yaw_spread_deg: 3.0
-      initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      max_xy_spread: 0.04
+      max_yaw_spread_deg: 0.5
+      initial_pose: [0.0444, -0.0073, 0.0, 0.0, 0.0, -0.0576]
 
     lio:
       max_iterations: 5

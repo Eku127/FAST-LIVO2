@@ -109,15 +109,20 @@ void LIVMapper::readParameters()
   this->declare_parameter<bool>("map_init.planar_enabled", true);
   this->declare_parameter<bool>("map_init.body_frame_source", false);
   this->declare_parameter<bool>("map_init.zero_velocity", false);
+  this->declare_parameter<bool>("map_init.prior_enabled", false);
   this->declare_parameter<double>("map_init.yaw_search_range_deg", 180.0);
   this->declare_parameter<double>("map_init.yaw_search_step_deg", 30.0);
   this->declare_parameter<int>("map_init.result_samples", 1);
+  this->declare_parameter<int>("map_init.settle_samples", 0);
   this->declare_parameter<int>("map_init.discard_worst_count", 0);
   this->declare_parameter<int>("map_init.max_score_failures", 3);
   this->declare_parameter<int>("map_init.warmup_frames", 5);
   this->declare_parameter<double>("map_init.max_sync_delta", 0.25);
   this->declare_parameter<double>("map_init.max_xy_spread", 0.2);
   this->declare_parameter<double>("map_init.max_yaw_spread_deg", 5.0);
+  this->declare_parameter<double>("map_init.prior_xy_radius", 0.0);
+  this->declare_parameter<double>("map_init.prior_yaw_range_deg", 0.0);
+  this->declare_parameter<double>("map_init.prior_score_weight", 0.0);
   this->declare_parameter<std::vector<double>>("map_init.initial_pose", std::vector<double>({0.0, 0.0, 0.0, 0.0, 0.0, 0.0}));
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_T", std::vector<double>());
   this->declare_parameter<std::vector<double>>("extrin_calib.extrinsic_R", std::vector<double>());
@@ -174,15 +179,20 @@ void LIVMapper::readParameters()
   this->get_parameter("map_init.planar_enabled", map_init_planar_en);
   this->get_parameter("map_init.body_frame_source", map_init_body_frame_source);
   this->get_parameter("map_init.zero_velocity", map_init_zero_velocity);
+  this->get_parameter("map_init.prior_enabled", map_init_prior_enabled);
   this->get_parameter("map_init.yaw_search_range_deg", map_init_yaw_search_range_deg);
   this->get_parameter("map_init.yaw_search_step_deg", map_init_yaw_search_step_deg);
   this->get_parameter("map_init.result_samples", map_init_result_samples);
+  this->get_parameter("map_init.settle_samples", map_init_settle_samples);
   this->get_parameter("map_init.discard_worst_count", map_init_discard_worst_count);
   this->get_parameter("map_init.max_score_failures", map_init_max_score_failures);
   this->get_parameter("map_init.warmup_frames", map_init_warmup_frames);
   this->get_parameter("map_init.max_sync_delta", map_init_max_sync_delta);
   this->get_parameter("map_init.max_xy_spread", map_init_max_xy_spread);
   this->get_parameter("map_init.max_yaw_spread_deg", map_init_max_yaw_spread_deg);
+  this->get_parameter("map_init.prior_xy_radius", map_init_prior_xy_radius);
+  this->get_parameter("map_init.prior_yaw_range_deg", map_init_prior_yaw_range_deg);
+  this->get_parameter("map_init.prior_score_weight", map_init_prior_score_weight);
   this->get_parameter("map_init.initial_pose", map_init_initial_pose);
   this->get_parameter("extrin_calib.extrinsic_T", extrinT);
   this->get_parameter("extrin_calib.extrinsic_R", extrinR);
@@ -192,6 +202,7 @@ void LIVMapper::readParameters()
   this->get_parameter("publish.dense_map_en", dense_map_en);
 
   map_init_result_samples = std::max(1, map_init_result_samples);
+  map_init_settle_samples = std::max(0, map_init_settle_samples);
   map_init_discard_worst_count = std::max(0, map_init_discard_worst_count);
   if (map_init_discard_worst_count >= map_init_result_samples)
   {
@@ -202,6 +213,9 @@ void LIVMapper::readParameters()
   map_init_max_sync_delta = std::max(0.0, map_init_max_sync_delta);
   map_init_max_xy_spread = std::max(0.0, map_init_max_xy_spread);
   map_init_max_yaw_spread_deg = std::max(0.0, map_init_max_yaw_spread_deg);
+  map_init_prior_xy_radius = std::max(0.0, map_init_prior_xy_radius);
+  map_init_prior_yaw_range_deg = std::max(0.0, map_init_prior_yaw_range_deg);
+  map_init_prior_score_weight = std::max(0.0, map_init_prior_score_weight);
 
   p_pre->blind_sqr = p_pre->blind * p_pre->blind;
 }
@@ -417,13 +431,59 @@ Eigen::Matrix4d LIVMapper::projectMapInitializationTransform(const Eigen::Matrix
   return planar_T;
 }
 
-Eigen::Matrix4d LIVMapper::selectMapInitializationTransform(
-  double &selected_score, double &max_xy_spread, double &max_yaw_spread) const
+double LIVMapper::mapInitializationPriorCost(
+  const Eigen::Matrix4d &map_T_current, double *xy_error, double *yaw_error) const
 {
-  std::vector<int> order(map_init_candidate_scores.size());
-  for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
+  if (xy_error) *xy_error = 0.0;
+  if (yaw_error) *yaw_error = 0.0;
+  if (!map_init_prior_enabled) return 0.0;
+
+  std::vector<double> pose = map_init_initial_pose;
+  if (pose.size() != 6) pose = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+  const double dx = map_T_current(0, 3) - pose[0];
+  const double dy = map_T_current(1, 3) - pose[1];
+  const double xy = std::hypot(dx, dy);
+  if (xy_error) *xy_error = xy;
+
+  const Eigen::Matrix3d rotation = map_T_current.block<3, 3>(0, 0);
+  const double yaw = std::atan2(rotation(1, 0), rotation(0, 0));
+  double yaw_diff = yaw - pose[5];
+  const double two_pi = 2.0 * M_PI;
+  while (yaw_diff > M_PI) yaw_diff -= two_pi;
+  while (yaw_diff < -M_PI) yaw_diff += two_pi;
+  yaw_diff = std::fabs(yaw_diff);
+  if (yaw_error) *yaw_error = yaw_diff;
+
+  double normalized_cost = 0.0;
+  if (map_init_prior_xy_radius > 0.0)
+  {
+    const double normalized_xy = xy / map_init_prior_xy_radius;
+    normalized_cost += normalized_xy * normalized_xy;
+  }
+  if (map_init_prior_yaw_range_deg > 0.0)
+  {
+    const double yaw_range = map_init_prior_yaw_range_deg * M_PI / 180.0;
+    const double normalized_yaw = yaw_diff / yaw_range;
+    normalized_cost += normalized_yaw * normalized_yaw;
+  }
+  return map_init_prior_score_weight * normalized_cost;
+}
+
+Eigen::Matrix4d LIVMapper::selectMapInitializationTransform(
+  double &selected_score, double &selected_rank_score, double &max_xy_spread, double &max_yaw_spread) const
+{
+  std::vector<int> order;
+  const size_t first_usable = std::min(
+    static_cast<size_t>(map_init_settle_samples),
+    map_init_candidate_scores.size());
+  order.reserve(map_init_candidate_scores.size() - first_usable);
+  for (size_t i = first_usable; i < map_init_candidate_scores.size(); ++i)
+  {
+    order.push_back(static_cast<int>(i));
+  }
   std::sort(order.begin(), order.end(), [this](int lhs, int rhs) {
-    return map_init_candidate_scores[lhs] < map_init_candidate_scores[rhs];
+    return map_init_candidate_rank_scores[lhs] < map_init_candidate_rank_scores[rhs];
   });
 
   const int keep_count = std::max(
@@ -438,12 +498,13 @@ Eigen::Matrix4d LIVMapper::selectMapInitializationTransform(
     return 0.5 * (values[mid - 1] + values[mid]);
   };
 
-  std::vector<double> xs, ys, zs, yaws, scores;
+  std::vector<double> xs, ys, zs, yaws, scores, rank_scores;
   xs.reserve(order.size());
   ys.reserve(order.size());
   zs.reserve(order.size());
   yaws.reserve(order.size());
   scores.reserve(order.size());
+  rank_scores.reserve(order.size());
 
   const Eigen::Matrix3d ref_rotation = map_init_candidate_transforms[order.front()].block<3, 3>(0, 0);
   const double ref_yaw = std::atan2(ref_rotation(1, 0), ref_rotation(0, 0));
@@ -461,6 +522,7 @@ Eigen::Matrix4d LIVMapper::selectMapInitializationTransform(
     zs.push_back(candidate(2, 3));
     yaws.push_back(yaw);
     scores.push_back(map_init_candidate_scores[index]);
+    rank_scores.push_back(map_init_candidate_rank_scores[index]);
   }
 
   Eigen::Matrix4d selected = Eigen::Matrix4d::Identity();
@@ -470,6 +532,7 @@ Eigen::Matrix4d LIVMapper::selectMapInitializationTransform(
   selected(1, 3) = median(ys);
   selected(2, 3) = map_init_planar_en ? projectMapInitializationTransform(selected)(2, 3) : median(zs);
   selected_score = median(scores);
+  selected_rank_score = median(rank_scores);
   max_xy_spread = 0.0;
   max_yaw_spread = 0.0;
   for (size_t i = 0; i < xs.size(); ++i)
@@ -548,6 +611,10 @@ bool LIVMapper::runMapInitialization()
   ndt->setInputTarget(map_init_target_cloud);
   ndt->setInputSource(source_cloud);
 
+  Eigen::Matrix4d local_T_current = Eigen::Matrix4d::Identity();
+  local_T_current.block<3, 3>(0, 0) = _state.rot_end;
+  local_T_current.block<3, 1>(0, 3) = _state.pos_end;
+
   Eigen::Matrix4d initial_guess = mapInitializationInitialGuess();
   if (!map_init_candidate_transforms.empty())
   {
@@ -565,6 +632,7 @@ bool LIVMapper::runMapInitialization()
   }
   Eigen::Matrix4d best_transform = Eigen::Matrix4d::Identity();
   double best_score = std::numeric_limits<double>::max();
+  double best_rank_score = std::numeric_limits<double>::max();
   bool best_converged = false;
 
   const double deg_to_rad = M_PI / 180.0;
@@ -572,28 +640,44 @@ bool LIVMapper::runMapInitialization()
   const double yaw_step = std::max(1.0, map_init_yaw_search_step_deg);
   const int yaw_steps = static_cast<int>(std::floor(yaw_range / yaw_step));
 
+  auto try_alignment = [&](const Eigen::Matrix4d &guess_d,
+                           const char *phase,
+                           double dx,
+                           double dy,
+                           double yaw_offset) {
+    pcl::PointCloud<pcl::PointXYZI> aligned_cloud;
+    ndt->align(aligned_cloud, guess_d.cast<float>());
+
+    const bool converged = ndt->hasConverged();
+    const double score = ndt->getFitnessScore();
+    const Eigen::Matrix4d final_transform =
+      projectMapInitializationTransform(ndt->getFinalTransformation().cast<double>());
+    const Eigen::Matrix4d candidate_map_T_current =
+      map_init_body_frame_source ? final_transform : final_transform * local_T_current;
+    double prior_xy = 0.0;
+    double prior_yaw = 0.0;
+    const double prior_cost = mapInitializationPriorCost(candidate_map_T_current, &prior_xy, &prior_yaw);
+    const double rank_score = score + prior_cost;
+    RCLCPP_INFO(this->get_logger(),
+                "[ MapInit ] %s dx=%.3f dy=%.3f yaw=%.1fdeg converged=%d score=%.6f rank=%.6f prior_xy=%.4f prior_yaw=%.3fdeg",
+                phase, dx, dy, yaw_offset / deg_to_rad, converged ? 1 : 0,
+                score, rank_score, prior_xy, prior_yaw / deg_to_rad);
+
+    if (converged && rank_score < best_rank_score)
+    {
+      best_score = score;
+      best_rank_score = rank_score;
+      best_converged = true;
+      best_transform = final_transform;
+    }
+  };
+
   for (int yaw_index = -yaw_steps; yaw_index <= yaw_steps; ++yaw_index)
   {
     const double yaw = static_cast<double>(yaw_index) * yaw_step * deg_to_rad;
     Eigen::Matrix4d yaw_guess = Eigen::Matrix4d::Identity();
     yaw_guess.block<3, 3>(0, 0) = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    Eigen::Matrix4f guess = (initial_guess * yaw_guess).cast<float>();
-
-    pcl::PointCloud<pcl::PointXYZI> aligned_cloud;
-    ndt->align(aligned_cloud, guess);
-
-    const bool converged = ndt->hasConverged();
-    const double score = ndt->getFitnessScore();
-    RCLCPP_INFO(this->get_logger(),
-                "[ MapInit ] yaw %.1f deg converged=%d score=%.6f",
-                yaw / deg_to_rad, converged ? 1 : 0, score);
-
-    if (converged && score < best_score)
-    {
-      best_score = score;
-      best_converged = true;
-      best_transform = projectMapInitializationTransform(ndt->getFinalTransformation().cast<double>());
-    }
+    try_alignment(initial_guess * yaw_guess, "coarse", 0.0, 0.0, yaw);
   }
 
   if (!best_converged)
@@ -614,6 +698,7 @@ bool LIVMapper::runMapInitialization()
     map_init_warmup_count = 0;
     map_init_candidate_transforms.clear();
     map_init_candidate_scores.clear();
+    map_init_candidate_rank_scores.clear();
     if (map_init_score_fail_count >= map_init_max_score_failures)
     {
       map_init_failed = true;
@@ -624,33 +709,70 @@ bool LIVMapper::runMapInitialization()
     return false;
   }
 
-  Eigen::Matrix4d local_T_current = Eigen::Matrix4d::Identity();
-  local_T_current.block<3, 3>(0, 0) = _state.rot_end;
-  local_T_current.block<3, 1>(0, 3) = _state.pos_end;
   const Eigen::Matrix4d candidate_map_T_current =
     map_init_body_frame_source ? best_transform : best_transform * local_T_current;
   const double candidate_yaw =
     std::atan2(candidate_map_T_current(1, 0), candidate_map_T_current(0, 0)) * 180.0 / M_PI;
+  double candidate_prior_xy = 0.0;
+  double candidate_prior_yaw = 0.0;
+  const double candidate_prior_cost =
+    mapInitializationPriorCost(candidate_map_T_current, &candidate_prior_xy, &candidate_prior_yaw);
+  const double candidate_rank_score = best_score + candidate_prior_cost;
 
   map_init_candidate_transforms.push_back(candidate_map_T_current);
   map_init_candidate_scores.push_back(best_score);
+  map_init_candidate_rank_scores.push_back(candidate_rank_score);
+  const int required_candidates = map_init_settle_samples + map_init_result_samples;
+  const int usable_candidates = std::max(
+    0, static_cast<int>(map_init_candidate_transforms.size()) - map_init_settle_samples);
   RCLCPP_INFO(this->get_logger(),
-              "[ MapInit ] candidate %zu/%d score=%.6f body_source=%d pose=(%.4f, %.4f, %.4f) yaw=%.3fdeg",
-              map_init_candidate_transforms.size(), map_init_result_samples,
-              best_score, map_init_body_frame_source ? 1 : 0,
+              "[ MapInit ] candidate %zu/%d usable=%d/%d settle=%d score=%.6f rank=%.6f body_source=%d pose=(%.4f, %.4f, %.4f) yaw=%.3fdeg prior_xy=%.4f prior_yaw=%.3fdeg",
+              map_init_candidate_transforms.size(), required_candidates,
+              usable_candidates, map_init_result_samples, map_init_settle_samples,
+              best_score, candidate_rank_score, map_init_body_frame_source ? 1 : 0,
               candidate_map_T_current(0, 3), candidate_map_T_current(1, 3), candidate_map_T_current(2, 3),
-              candidate_yaw);
+              candidate_yaw, candidate_prior_xy, candidate_prior_yaw * 180.0 / M_PI);
 
-  if (static_cast<int>(map_init_candidate_transforms.size()) < map_init_result_samples)
+  if (static_cast<int>(map_init_candidate_transforms.size()) < required_candidates)
   {
     return false;
   }
 
   double selected_score = best_score;
+  double selected_rank_score = best_rank_score;
   double max_xy_spread = 0.0;
   double max_yaw_spread = 0.0;
   const Eigen::Matrix4d selected_map_T_current =
-    selectMapInitializationTransform(selected_score, max_xy_spread, max_yaw_spread);
+    selectMapInitializationTransform(selected_score, selected_rank_score, max_xy_spread, max_yaw_spread);
+
+  double selected_prior_xy = 0.0;
+  double selected_prior_yaw = 0.0;
+  mapInitializationPriorCost(selected_map_T_current, &selected_prior_xy, &selected_prior_yaw);
+  const double selected_prior_yaw_deg = selected_prior_yaw * 180.0 / M_PI;
+  if (map_init_prior_enabled &&
+      ((map_init_prior_xy_radius > 0.0 && selected_prior_xy > map_init_prior_xy_radius) ||
+       (map_init_prior_yaw_range_deg > 0.0 && selected_prior_yaw_deg > map_init_prior_yaw_range_deg)))
+  {
+    map_init_score_fail_count++;
+    RCLCPP_WARN(this->get_logger(),
+                "[ MapInit ] selected pose violates prior xy=%.4fm/%.4fm yaw=%.3fdeg/%.3fdeg; resetting attempt %d/%d",
+                selected_prior_xy, map_init_prior_xy_radius, selected_prior_yaw_deg, map_init_prior_yaw_range_deg,
+                map_init_score_fail_count, map_init_max_score_failures);
+    map_init_submap_cloud->clear();
+    map_init_frame_count = 0;
+    map_init_warmup_count = 0;
+    map_init_candidate_transforms.clear();
+    map_init_candidate_scores.clear();
+    map_init_candidate_rank_scores.clear();
+    if (map_init_score_fail_count >= map_init_max_score_failures)
+    {
+      map_init_failed = true;
+      RCLCPP_FATAL(this->get_logger(), "[ MapInit ] failed after %d prior-gated attempts; shutting down",
+                   map_init_score_fail_count);
+      rclcpp::shutdown();
+    }
+    return false;
+  }
 
   const double max_yaw_spread_deg = max_yaw_spread * 180.0 / M_PI;
   if ((map_init_max_xy_spread > 0.0 && max_xy_spread > map_init_max_xy_spread) ||
@@ -666,6 +788,7 @@ bool LIVMapper::runMapInitialization()
     map_init_warmup_count = 0;
     map_init_candidate_transforms.clear();
     map_init_candidate_scores.clear();
+    map_init_candidate_rank_scores.clear();
     if (map_init_score_fail_count >= map_init_max_score_failures)
     {
       map_init_failed = true;
@@ -691,10 +814,13 @@ bool LIVMapper::runMapInitialization()
   }
   const double output_yaw = std::atan2(_state.rot_end(1, 0), _state.rot_end(0, 0)) * 180.0 / M_PI;
   RCLCPP_INFO(this->get_logger(),
-              "[ MapInit ] success score=%.6f samples=%zu discarded=%d planar=%d body_source=%d zero_velocity=%d xy_spread=%.4f yaw_spread=%.3fdeg pose=(%.4f, %.4f, %.4f) yaw=%.3fdeg",
-              selected_score, map_init_candidate_transforms.size(), map_init_discard_worst_count,
+              "[ MapInit ] success score=%.6f rank=%.6f samples=%zu usable=%d settle=%d discarded=%d planar=%d body_source=%d zero_velocity=%d xy_spread=%.4f yaw_spread=%.3fdeg prior_xy=%.4f prior_yaw=%.3fdeg pose=(%.4f, %.4f, %.4f) yaw=%.3fdeg",
+              selected_score, selected_rank_score, map_init_candidate_transforms.size(),
+              static_cast<int>(map_init_candidate_transforms.size()) - map_init_settle_samples,
+              map_init_settle_samples, map_init_discard_worst_count,
               map_init_planar_en ? 1 : 0, map_init_body_frame_source ? 1 : 0,
               map_init_zero_velocity ? 1 : 0, max_xy_spread, max_yaw_spread_deg,
+              selected_prior_xy, selected_prior_yaw_deg,
               _state.pos_end.x(), _state.pos_end.y(), _state.pos_end.z(), output_yaw);
   return true;
 }
@@ -746,6 +872,7 @@ bool LIVMapper::mapInitializationGate()
       map_init_warmup_count = 0;
       map_init_candidate_transforms.clear();
       map_init_candidate_scores.clear();
+      map_init_candidate_rank_scores.clear();
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                            "[ MapInit ] waiting for fresh lidar/imu sync delta=%.3fs threshold=%.3fs",
                            sync_delta, map_init_max_sync_delta);
